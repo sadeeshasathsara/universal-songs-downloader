@@ -198,26 +198,32 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
     }
 
     # Format caption
-    caption_lines = [f"🎵 **Search Results for:** _{query}_\n"]
+    caption_lines = [
+        f"🎵 **Search Results for:** _{query}_\n",
+        "👇 **Tap a song below to download:**\n",
+    ]
     keyboard = []
-    row = []
 
     for idx, track in enumerate(results, start=1):
         dur = format_duration(track.duration_ms)
         caption_lines.append(f"**{idx}.** {track.title} — _{track.artist_str}_ `[{dur}]`")
-        btn = InlineKeyboardButton(f"⬇️ #{idx}", callback_data=f"dl:s:{cache_id}:{idx-1}")
-        row.append(btn)
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
 
-    if row:
-        keyboard.append(row)
+        # Format button text with title, artist, and duration
+        dur_tag = f"[{dur}]"
+        raw_info = f"{idx}. {track.title} — {track.artist_str}"
+        max_len = 45 - len(dur_tag)
+        if len(raw_info) > max_len:
+            btn_text = f"{raw_info[:max_len-1]}… {dur_tag}"
+        else:
+            btn_text = f"{raw_info} {dur_tag}"
+
+        btn = InlineKeyboardButton(f"🎵 {btn_text}", callback_data=f"dl:s:{cache_id}:{idx-1}")
+        keyboard.append([btn])
 
     # Add extra action row
     action_row = [
-        InlineKeyboardButton("⬇️ Download All (1-5)", callback_data=f"dl:s:{cache_id}:all"),
-        InlineKeyboardButton("❌ Dismiss", callback_data=f"ui:dismiss"),
+        InlineKeyboardButton("⬇️ Download All", callback_data=f"dl:s:{cache_id}:all"),
+        InlineKeyboardButton("❌ Dismiss", callback_data="ui:dismiss"),
     ]
     keyboard.append(action_row)
 
