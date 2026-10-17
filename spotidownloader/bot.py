@@ -29,7 +29,7 @@ from telegram.ext import (
 
 from .spotify import SpotifyClient, parse_spotify_url
 from .downloader import AudioDownloader
-from .search import search_songs
+from .search import search_songs, get_album_tracks, get_related_tracks
 from .models import CollectionInfo, TrackInfo
 from .storage import BotDatabase, DATA_DIR
 from .admin import (
@@ -843,6 +843,9 @@ async def send_track_to_user(
         except Exception:
             pass
 
+        # Suggest full album and related playlist if available
+        asyncio.create_task(send_album_and_playlist_suggestions(chat_id, track, context))
+
     except Exception as e:
         logger.error(f"Error sending track {track.title}: {e}")
         try:
@@ -853,6 +856,87 @@ async def send_track_to_user(
         # Clean up temporary directory and free buffers
         shutil.rmtree(temp_dir, ignore_errors=True)
         gc.collect()
+
+async def send_album_and_playlist_suggestions(chat_id: int, track: TrackInfo, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Suggests the full album (if part of an album) and related playlist/songs by the artist.
+    """
+    try:
+        album_title = ""
+        album_tracks = []
+        album_cover = ""
+
+        # 1. Fetch album tracks if album_id is available
+        if track.album_id:
+            album_title, album_cover, all_album_tracks = await asyncio.to_thread(get_album_tracks, track.album_id)
+            norm_title = track.title.lower().strip()
+            album_tracks = [t for t in all_album_tracks if norm_title not in t.title.lower() and t.title.lower() not in norm_title]
+
+        # 2. Fetch related songs / playlist by artist
+        related_tracks = await asyncio.to_thread(get_related_tracks, track.artist_str, track.title, 4)
+
+        if not album_tracks and not related_tracks:
+            return
+
+        lines = ["<blockquote>✨ <b>More Music You Might Like</b></blockquote>\n"]
+        keyboard = []
+
+        # If album has other tracks
+        if album_tracks and len(album_tracks) >= 1:
+            clean_album_name = album_title or track.album
+            lines.append(f"💿 <b>More from Album:</b> <i>{esc(clean_album_name)}</i>")
+            for t in album_tracks[:3]:
+                dur = format_duration(t.duration_ms)
+                lines.append(f"• {esc(t.title)} <code>[{dur}]</code>")
+            if len(album_tracks) > 3:
+                lines.append(f"<i>...and {len(album_tracks) - 3} more tracks</i>")
+            lines.append("")
+
+            # Cache album collection for one-tap download
+            album_cache_id = uuid.uuid4().hex[:8]
+            album_collection = CollectionInfo(
+                type="album",
+                title=clean_album_name,
+                cover_url=album_cover or track.cover_url,
+                tracks=album_tracks,
+            )
+            set_cache(album_cache_id, {"type": "album", "collection": album_collection})
+            keyboard.append([
+                InlineKeyboardButton(f"💿 Download Full Album ({len(album_tracks)} songs)", callback_data=f"dl:c:{album_cache_id}:all")
+            ])
+
+        # If related recommendations exist
+        if related_tracks:
+            lines.append(f"🎶 <b>Related Playlist by {esc(track.artist_str)}:</b>")
+            for t in related_tracks[:3]:
+                dur = format_duration(t.duration_ms)
+                lines.append(f"• {esc(t.title)} <code>[{dur}]</code>")
+            lines.append("")
+
+            # Cache related playlist for one-tap download
+            mix_cache_id = uuid.uuid4().hex[:8]
+            mix_collection = CollectionInfo(
+                type="playlist",
+                title=f"Best of {track.artist_str}",
+                cover_url=track.cover_url,
+                tracks=related_tracks,
+            )
+            set_cache(mix_cache_id, {"type": "playlist", "collection": mix_collection})
+            keyboard.append([
+                InlineKeyboardButton(f"🎧 Download Related Mix ({len(related_tracks)} songs)", callback_data=f"dl:c:{mix_cache_id}:all")
+            ])
+
+        keyboard.append([InlineKeyboardButton("❌ Dismiss", callback_data="ui:dismiss")])
+
+        suggestion_text = "\n".join(lines).strip()
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=suggestion_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=constants.ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.warning(f"Error sending album/playlist suggestions: {e}")
 
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")

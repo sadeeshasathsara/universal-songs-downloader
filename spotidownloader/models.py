@@ -15,6 +15,7 @@ class TrackInfo:
     total_tracks: int = 1
     spotify_id: str = ""
     spotify_url: str = ""
+    album_id: str = ""  # iTunes collectionId, used for album track lookups
 
     @property
     def artist_str(self) -> str:

@@ -43,6 +43,7 @@ def search_itunes(query: str, limit: int = 5) -> List[TrackInfo]:
                 cover_url = raw_art.replace("100x100bb.jpg", "1000x1000bb.jpg") if raw_art else ""
                 
                 track_id = str(r.get("trackId", ""))
+                album_id = str(r.get("collectionId", ""))
                 genre = r.get("primaryGenreName", "")
                 spotify_url = r.get("trackViewUrl", "")
 
@@ -59,6 +60,7 @@ def search_itunes(query: str, limit: int = 5) -> List[TrackInfo]:
                     total_tracks=total_tracks,
                     spotify_id=track_id,
                     spotify_url=spotify_url,
+                    album_id=album_id,
                 ))
     except Exception as e:
         logger.warning(f"iTunes search failed: {e}")
@@ -124,3 +126,81 @@ def search_songs(query: str, limit: int = 5) -> List[TrackInfo]:
     if not results:
         results = search_youtube_fallback(query, limit=limit)
     return results
+
+def get_album_tracks(album_id: str) -> tuple[str, str, List[TrackInfo]]:
+    """
+    Looks up full album tracklist from iTunes by album_id (collectionId).
+    Returns (album_name, album_cover_url, list_of_tracks).
+    """
+    if not album_id:
+        return "", "", []
+
+    url = "https://itunes.apple.com/lookup"
+    params = {"id": album_id, "entity": "song"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    album_title = ""
+    album_cover = ""
+    tracks: List[TrackInfo] = []
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", [])
+            for r in results:
+                wrapper = r.get("wrapperType")
+                if wrapper == "collection":
+                    album_title = r.get("collectionName", "")
+                    raw_art = r.get("artworkUrl100", "")
+                    album_cover = raw_art.replace("100x100bb.jpg", "1000x1000bb.jpg") if raw_art else ""
+                elif wrapper == "track":
+                    t_title = r.get("trackName", "Unknown Title")
+                    artist = r.get("artistName", "Unknown Artist")
+                    album = r.get("collectionName", album_title or "Unknown Album")
+                    dur = r.get("trackTimeMillis", 0)
+                    track_num = r.get("trackNumber", 1)
+                    raw_art = r.get("artworkUrl100", "")
+                    cover = raw_art.replace("100x100bb.jpg", "1000x1000bb.jpg") if raw_art else album_cover
+
+                    tracks.append(TrackInfo(
+                        title=t_title,
+                        artists=[artist],
+                        album=album,
+                        album_artist=artist,
+                        cover_url=cover,
+                        duration_ms=dur,
+                        track_number=track_num,
+                        spotify_id=str(r.get("trackId", "")),
+                        album_id=album_id,
+                    ))
+    except Exception as e:
+        logger.warning(f"Failed to lookup album tracks for ID {album_id}: {e}")
+
+    return album_title, album_cover, tracks
+
+def get_related_tracks(artist_name: str, exclude_title: str = "", limit: int = 5) -> List[TrackInfo]:
+    """
+    Finds top songs/recommendations by the artist to build a related playlist.
+    """
+    if not artist_name:
+        return []
+
+    all_tracks = search_itunes(artist_name, limit=limit + 3)
+    norm_exclude = exclude_title.lower().strip()
+    related: List[TrackInfo] = []
+    seen = set()
+
+    for t in all_tracks:
+        t_norm = t.title.lower().strip()
+        if norm_exclude and (t_norm in norm_exclude or norm_exclude in t_norm):
+            continue
+        if t_norm in seen:
+            continue
+        seen.add(t_norm)
+        related.append(t)
+        if len(related) >= limit:
+            break
+
+    return related
+
