@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Downloads folder
+downloads/
+test_downloads/
+
+# Temporary files
+.tmp_*
+*.log
