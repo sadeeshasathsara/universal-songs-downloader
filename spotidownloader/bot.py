@@ -44,6 +44,7 @@ from .admin import (
     userinfo_command,
     clearcache_command,
     restart_command,
+    cookies_command,
     admin_callback_router,
 )
 
@@ -938,6 +939,32 @@ async def send_album_and_playlist_suggestions(chat_id: int, track: TrackInfo, co
     except Exception as e:
         logger.warning(f"Error sending album/playlist suggestions: {e}")
 
+async def handle_document_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+
+    doc = update.message.document
+    if not doc or not doc.file_name:
+        return
+
+    name_lower = doc.file_name.lower()
+    if "cookie" in name_lower or name_lower.endswith(".txt"):
+        try:
+            target_path = os.path.join(DATA_DIR, "cookies.txt")
+            tg_file = await context.bot.get_file(doc.file_id)
+            await tg_file.download_to_drive(target_path)
+            size_kb = os.path.getsize(target_path) / 1024
+            await update.message.reply_text(
+                f"✅ <b>YouTube Cookies Installed!</b>\n\n"
+                f"📁 Saved to: <code>data/cookies.txt</code>\n"
+                f"📦 Size: <code>{size_kb:.1f} KB</code>\n\n"
+                f"🚀 <i>Datacenter IP bot-challenge bypass is now active!</i>",
+                parse_mode=constants.ParseMode.HTML,
+            )
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Error saving cookies: {esc(e)}")
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -967,6 +994,7 @@ def main():
     application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("log", logs_command))
     application.add_handler(CommandHandler("sendlog", sendlog_command))
+    application.add_handler(CommandHandler("cookies", cookies_command))
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("userinfo", userinfo_command))
@@ -975,6 +1003,7 @@ def main():
 
     # Callback & Message Handlers
     application.add_handler(CallbackQueryHandler(callback_router))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
     logger.info("Universal Songs Downloader Telegram Bot starting...")

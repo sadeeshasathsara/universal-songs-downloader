@@ -71,12 +71,17 @@ def search_youtube_fallback(query: str, limit: int = 5) -> List[TrackInfo]:
     """
     Fallback search using yt-dlp to query YouTube / YouTube Music.
     """
+    from .downloader import get_cookie_file
+    cookie_file = get_cookie_file()
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True,
         "default_search": f"ytsearch{limit}",
     }
+    if cookie_file:
+        ydl_opts["cookiefile"] = cookie_file
     tracks: List[TrackInfo] = []
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

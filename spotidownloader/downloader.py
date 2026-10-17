@@ -11,6 +11,23 @@ from .tagger import tag_file
 
 logger = logging.getLogger(__name__)
 
+def get_cookie_file() -> Optional[str]:
+    """Finds cookies.txt file path if available to bypass datacenter IP restrictions."""
+    env_path = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_cookie = os.path.join(base_dir, "data", "cookies.txt")
+    if os.path.exists(data_cookie):
+        return data_cookie
+
+    root_cookie = os.path.join(base_dir, "cookies.txt")
+    if os.path.exists(root_cookie):
+        return root_cookie
+
+    return None
+
 class AudioDownloader:
     def __init__(
         self,
@@ -159,6 +176,8 @@ class AudioDownloader:
             if progress_callback:
                 progress_callback(d)
 
+        cookie_file = get_cookie_file()
+
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': f"{temp_basename}.%(ext)s",
@@ -176,10 +195,15 @@ class AudioDownloader:
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'ios', 'mweb', 'web'],
+                    'player_skip': ['configs', 'webpage'],
                 }
             },
             'progress_hooks': [ydl_hook],
         }
+
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
+            logger.info(f"Using YouTube cookie file: {cookie_file}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

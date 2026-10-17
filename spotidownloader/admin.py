@@ -274,6 +274,35 @@ async def sendlog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.HTML,
         )
 
+async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ <b>Unauthorized.</b>", parse_mode=constants.ParseMode.HTML)
+        return
+
+    from .downloader import get_cookie_file
+    cookie_path = get_cookie_file()
+
+    if cookie_path and os.path.exists(cookie_path):
+        size_kb = os.path.getsize(cookie_path) / 1024
+        msg = (
+            "<blockquote>🍪 <b>YouTube Cookies: Active</b></blockquote>\n\n"
+            f"• <b>Status:</b> ✅ Installed & Active\n"
+            f"• <b>Location:</b> <code>{cookie_path}</code>\n"
+            f"• <b>Size:</b> <code>{size_kb:.1f} KB</code>\n\n"
+            "<i>To update, simply send a new <code>cookies.txt</code> file to this chat.</i>"
+        )
+    else:
+        msg = (
+            "<blockquote>🍪 <b>YouTube Cookies: Not Found</b></blockquote>\n\n"
+            "• <b>Status:</b> ⚠️ Missing\n\n"
+            "<b>How to add cookies to bypass datacenter IP restrictions:</b>\n"
+            "1. Export cookies from your browser using the Chrome/Firefox extension <b>Get cookies.txt locally</b> on YouTube.\n"
+            "2. Send the exported <code>cookies.txt</code> file directly as a document to this chat.\n"
+            "3. The bot will automatically save and activate it!"
+        )
+    await update.message.reply_text(msg, parse_mode=constants.ParseMode.HTML)
+
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
