@@ -43,13 +43,14 @@ def search_itunes(query: str, limit: int = 5) -> List[TrackInfo]:
                 cover_url = raw_art.replace("100x100bb.jpg", "1000x1000bb.jpg") if raw_art else ""
                 
                 track_id = str(r.get("trackId", ""))
-                spotify_url = r.get("trackViewUrl", "")
+                genre = r.get("primaryGenreName", "")
 
                 tracks.append(TrackInfo(
                     title=title,
                     artists=[artist],
                     album=album,
                     album_artist=artist,
+                    genre=genre,
                     cover_url=cover_url,
                     duration_ms=duration_ms,
                     release_date=release_date,

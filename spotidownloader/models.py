@@ -7,6 +7,7 @@ class TrackInfo:
     artists: List[str]
     album: str = "Unknown Album"
     album_artist: str = ""
+    genre: str = ""
     cover_url: str = ""
     duration_ms: int = 0
     release_date: str = ""

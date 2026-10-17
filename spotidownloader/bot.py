@@ -56,14 +56,14 @@ def get_user_settings(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
     bitrate = context.user_data.get("bitrate", os.getenv("DEFAULT_BITRATE", "320"))
     return fmt, bitrate
 
-def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, bitrate: str):
+def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, bitrate: str, progress_callback=None):
     downloader = AudioDownloader(
         output_dir=temp_dir,
         audio_format=audio_format,
         bitrate=bitrate,
         skip_existing=False,
     )
-    success, filepath, status = downloader.download_track(track=track)
+    success, filepath, status = downloader.download_track(track=track, progress_callback=progress_callback)
     return success, filepath, status
 
 # ----------------- Handlers -----------------
@@ -197,16 +197,28 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "tracks": results,
     }
 
-    # Format caption
-    caption_lines = [
-        f"🎵 **Search Results for:** _{query}_\n",
-        "👇 **Tap a song below to download:**\n",
+    # Format caption with song information (singer, album, duration, year, genre)
+    top = results[0]
+    top_dur = format_duration(top.duration_ms)
+
+    caption_parts = [
+        f"🎵 **Search:** _{query}_\n",
+        f"🎶 **Track:** {top.title}",
+        f"👤 **Artist / Singer:** {top.artist_str}",
     ]
+    if top.album and top.album not in ("Single", "Unknown Album"):
+        caption_parts.append(f"💿 **Album:** {top.album}")
+    if top.release_date:
+        caption_parts.append(f"📅 **Released:** {top.release_date[:4]}")
+    if top.genre:
+        caption_parts.append(f"🏷️ **Genre:** {top.genre}")
+    caption_parts.append(f"⏱️ **Duration:** {top_dur}\n")
+    caption_parts.append("👇 **Tap a song below to download:**")
+
     keyboard = []
 
     for idx, track in enumerate(results, start=1):
         dur = format_duration(track.duration_ms)
-        caption_lines.append(f"**{idx}.** {track.title} — _{track.artist_str}_ `[{dur}]`")
 
         # Format button text with title, artist, and duration
         dur_tag = f"[{dur}]"
@@ -227,8 +239,8 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
     ]
     keyboard.append(action_row)
 
-    cover_photo = results[0].cover_url or DEFAULT_COVER
-    caption_text = "\n".join(caption_lines)
+    cover_photo = top.cover_url or DEFAULT_COVER
+    caption_text = "\n".join(caption_parts)
 
     try:
         await update.message.reply_photo(
@@ -482,6 +494,56 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----------------- Download & Sender Helper -----------------
 
+def render_progress_card(track: TrackInfo, state: dict) -> str:
+    status = state.get("status", "downloading")
+    percent = max(0.0, min(state.get("percent", 0.0), 100.0))
+
+    # 12-block progress bar
+    total_blocks = 12
+    filled = int((percent / 100.0) * total_blocks)
+    bar = "▰" * filled + "▱" * (total_blocks - filled)
+
+    if status == "downloading":
+        speed = state.get("speed", 0.0)
+        if speed >= 1024 * 1024:
+            speed_str = f"{speed / (1024 * 1024):.1f} MB/s"
+        elif speed > 0:
+            speed_str = f"{speed / 1024:.0f} KB/s"
+        else:
+            speed_str = "-- KB/s"
+
+        downloaded_mb = state.get("downloaded", 0) / (1024 * 1024)
+        total_mb = state.get("total", 0) / (1024 * 1024)
+        eta = state.get("eta", 0)
+        eta_str = f"{eta // 60:02d}:{eta % 60:02d}" if eta and eta > 0 else "--:--"
+        size_str = f"{downloaded_mb:.1f} MB / {total_mb:.1f} MB" if total_mb > 0 else f"{downloaded_mb:.1f} MB"
+
+        return (
+            f"⬇️ **Downloading Audio...**\n"
+            f"🎵 **{track.title}**\n"
+            f"👤 _{track.artist_str}_\n\n"
+            f"`[{bar}]` **{percent:.1f}%**\n"
+            f"⚡ **Speed:** {speed_str} • ⏱️ **ETA:** {eta_str}\n"
+            f"📦 **Size:** {size_str}"
+        )
+    elif status == "converting":
+        return (
+            f"🎚️ **Converting & Tagging...**\n"
+            f"🎵 **{track.title}**\n"
+            f"👤 _{track.artist_str}_\n\n"
+            f"`[▰▰▰▰▰▰▰▰▰▰▰▱]` **95.0%**\n"
+            f"✨ Embedding 320kbps MP3 tags & HD cover art..."
+        )
+    elif status == "uploading":
+        return (
+            f"📤 **Uploading to Telegram...**\n"
+            f"🎵 **{track.title}**\n"
+            f"👤 _{track.artist_str}_\n\n"
+            f"`[▰▰▰▰▰▰▰▰▰▰▰▰]` **100%**\n"
+            f"🚀 Delivering high-fidelity audio..."
+        )
+    return f"⏳ Processing **{track.title}**..."
+
 async def send_track_to_user(
     chat_id: int,
     track: TrackInfo,
@@ -490,36 +552,69 @@ async def send_track_to_user(
     bitrate: str = "320",
 ):
     temp_dir = tempfile.mkdtemp(prefix="spotibot_")
+    progress_state = {
+        "status": "downloading",
+        "percent": 0.0,
+        "downloaded": 0,
+        "total": 0,
+        "speed": 0.0,
+        "eta": 0,
+    }
+
+    initial_text = render_progress_card(track, progress_state)
     status_msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"⏳ Downloading **{track.title}** by _{track.artist_str}_\nPlease wait...",
+        text=initial_text,
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
-    # Send chat action while downloading and converting
-    async def keep_alive_action():
-        try:
-            while True:
-                await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
-                await asyncio.sleep(4)
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+    def ytdl_progress_hook(d):
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            downloaded = d.get("downloaded_bytes") or 0
+            speed = d.get("speed") or 0.0
+            eta = d.get("eta") or 0
+            if total > 0:
+                progress_state["percent"] = min(99.0, (downloaded / total) * 100.0)
+            progress_state["downloaded"] = downloaded
+            progress_state["total"] = total
+            progress_state["speed"] = speed
+            progress_state["eta"] = eta
+            progress_state["status"] = "downloading"
+        elif d.get("status") == "finished":
+            progress_state["status"] = "converting"
+            progress_state["percent"] = 95.0
 
-    action_task = asyncio.create_task(keep_alive_action())
+    stop_event = asyncio.Event()
+
+    async def live_progress_reporter():
+        last_card = initial_text
+        while not stop_event.is_set():
+            try:
+                card = render_progress_card(track, progress_state)
+                if card != last_card:
+                    await status_msg.edit_text(card, parse_mode=constants.ParseMode.MARKDOWN)
+                    last_card = card
+                await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
+            except Exception:
+                pass
+            await asyncio.sleep(1.5)
+
+    reporter_task = asyncio.create_task(live_progress_reporter())
 
     try:
-        # Download in worker thread
+        # Download in worker thread with progress hook
         success, filepath, status = await asyncio.to_thread(
             download_and_tag_worker,
             track,
             temp_dir,
             audio_format,
             bitrate,
+            ytdl_progress_hook,
         )
     finally:
-        action_task.cancel()
+        stop_event.set()
+        reporter_task.cancel()
 
     try:
         if not success or not os.path.exists(filepath):
@@ -536,7 +631,13 @@ async def send_track_to_user(
             except Exception:
                 pass
 
-        await status_msg.edit_text(f"📤 Uploading **{track.title}** to Telegram...", parse_mode=constants.ParseMode.MARKDOWN)
+        # Update card to uploading phase (100%)
+        progress_state["status"] = "uploading"
+        progress_state["percent"] = 100.0
+        try:
+            await status_msg.edit_text(render_progress_card(track, progress_state), parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            pass
 
         # Upload audio file with extended timeouts for large files
         bot_username = context.bot.username or "UniversalSongsDownloader"
