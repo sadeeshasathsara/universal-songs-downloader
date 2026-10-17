@@ -8,6 +8,10 @@ Download tracks, albums, playlists, or simply search by song name! It fetches st
 
 ## ✨ Features
 
+- **🤖 Universal Telegram Bot Integration**:
+  - Full-featured Telegram bot (`@universalsongsdownloaderbot`)
+  - Rich inline buttons, thumbnail previews, format pickers, and live progress
+  - Audio files directly uploaded into Telegram chat with embedded metadata and cover art!
 - **🔍 Direct Song Search**:
   - Don't have a Spotify URL? Just type any song name or artist (e.g. `Blinding Lights` or `Ed Sheeran Shape of You`).
   - Displays top search results with artist, album, and duration.
@@ -58,7 +62,31 @@ pip install -r requirements.txt
 
 ---
 
-## 🎧 Usage
+## 🤖 Running the Telegram Bot
+
+Your bot token is configured in `.env`.
+
+To launch the bot:
+```powershell
+# Windows 1-click batch runner
+.\run_bot.bat
+
+# Or run directly via Python
+.\.venv\Scripts\python.exe run_bot.py
+```
+
+### Telegram Bot Capabilities:
+1. **Send `/start`**: Welcome panel with navigation buttons.
+2. **Type Any Song Name**: Displays top 5 matching songs with cover thumbnail and instant `[ ⬇️ #1 ]` to `[ ⬇️ #5 ]` buttons or `[ ⬇️ Download All ]`.
+3. **Paste Spotify Link**: Automatically detects Tracks, Albums, and Playlists.
+   - For Tracks: Shows album cover, song length, artist, and format download buttons.
+   - For Albums/Playlists: Shows cover art, song count, `[ ⬇️ Download All ]`, and `[ 📋 View Tracklist ]` pagination.
+4. **Settings (`/settings`)**: Choose preferred audio quality: 320kbps MP3, 192kbps MP3, FLAC lossless, or M4A.
+5. **Direct Delivery**: Audio is uploaded directly to your Telegram chat with full ID3 metadata and album art.
+
+---
+
+## 🎧 CLI Usage
 
 ### 1. Interactive Mode
 Simply run the tool without arguments:
