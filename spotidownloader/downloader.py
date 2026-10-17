@@ -183,7 +183,10 @@ class AudioDownloader:
         ytdlp_conf = os.path.join(base_dir, "data", "yt-dlp.conf")
 
         ydl_opts = {
-            'format': 'bestaudio/best',
+            # Prefer audio-only, fall all the way back to any format — handles VPS-restricted
+            # videos where only format 18 (combined video+audio mp4) is available
+            'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best[acodec!=none]/best',
+            'format_sort': ['abr', 'tbr'],
             'outtmpl': f"{temp_basename}.%(ext)s",
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
