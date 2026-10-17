@@ -44,6 +44,7 @@ def search_itunes(query: str, limit: int = 5) -> List[TrackInfo]:
                 
                 track_id = str(r.get("trackId", ""))
                 genre = r.get("primaryGenreName", "")
+                spotify_url = r.get("trackViewUrl", "")
 
                 tracks.append(TrackInfo(
                     title=title,
@@ -85,8 +86,9 @@ def search_youtube_fallback(query: str, limit: int = 5) -> List[TrackInfo]:
                 title = e.get("title", "Unknown Title")
                 uploader = e.get("uploader", "Unknown Artist")
                 duration = int(e.get("duration", 0) or 0) * 1000
-                url = e.get("url") or e.get("webpage_url") or ""
-                thumbnail = e.get("thumbnail") or ""
+                video_id = e.get("id", "")
+                url = e.get("url") or e.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
+                thumbnail = e.get("thumbnail") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
 
                 # Clean up title if format is "Artist - Title"
                 artists = [uploader]
@@ -106,7 +108,7 @@ def search_youtube_fallback(query: str, limit: int = 5) -> List[TrackInfo]:
                     release_date="",
                     track_number=1,
                     total_tracks=1,
-                    spotify_id=e.get("id", ""),
+                    spotify_id=video_id,
                     spotify_url=url,
                 ))
     except Exception as e:
