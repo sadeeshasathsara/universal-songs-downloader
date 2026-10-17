@@ -91,12 +91,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    await update.message.reply_photo(
-        photo=DEFAULT_COVER,
-        caption=welcome_text,
-        parse_mode=constants.ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    avatar_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "bot_avatar.jpg")
+    photo_obj = open(avatar_path, "rb") if os.path.exists(avatar_path) else DEFAULT_COVER
+
+    try:
+        await update.message.reply_photo(
+            photo=photo_obj,
+            caption=welcome_text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    except Exception:
+        await update.message.reply_photo(
+            photo=DEFAULT_COVER,
+            caption=welcome_text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    finally:
+        if hasattr(photo_obj, "close"):
+            photo_obj.close()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
