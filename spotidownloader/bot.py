@@ -197,23 +197,16 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "tracks": results,
     }
 
-    # Format caption with song information (singer, album, duration, year, genre)
-    top = results[0]
-    top_dur = format_duration(top.duration_ms)
-
-    caption_parts = [
-        f"🎵 **Search:** _{query}_\n",
-        f"🎶 **Track:** {top.title}",
-        f"👤 **Artist / Singer:** {top.artist_str}",
+    # Format caption with search results list
+    caption_lines = [
+        f"🔍 **Search Results for:** _{query}_\n"
     ]
-    if top.album and top.album not in ("Single", "Unknown Album"):
-        caption_parts.append(f"💿 **Album:** {top.album}")
-    if top.release_date:
-        caption_parts.append(f"📅 **Released:** {top.release_date[:4]}")
-    if top.genre:
-        caption_parts.append(f"🏷️ **Genre:** {top.genre}")
-    caption_parts.append(f"⏱️ **Duration:** {top_dur}\n")
-    caption_parts.append("👇 **Tap a song below to download:**")
+    for idx, track in enumerate(results, start=1):
+        dur = format_duration(track.duration_ms)
+        caption_lines.append(f"**{idx}.** {track.title} — _{track.artist_str}_ `[{dur}]`")
+
+    caption_lines.append("\n👇 **Tap a song below to download:**")
+    caption_text = "\n".join(caption_lines)
 
     keyboard = []
 
@@ -239,8 +232,7 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
     ]
     keyboard.append(action_row)
 
-    cover_photo = top.cover_url or DEFAULT_COVER
-    caption_text = "\n".join(caption_parts)
+    cover_photo = results[0].cover_url or DEFAULT_COVER
 
     try:
         await update.message.reply_photo(
@@ -503,6 +495,21 @@ def render_progress_card(track: TrackInfo, state: dict) -> str:
     filled = int((percent / 100.0) * total_blocks)
     bar = "▰" * filled + "▱" * (total_blocks - filled)
 
+    info_lines = [
+        f"🎶 **Track:** {track.title}",
+        f"👤 **Artist / Singer:** {track.artist_str}",
+    ]
+    if track.album and track.album not in ("Single", "Unknown Album"):
+        info_lines.append(f"💿 **Album:** {track.album}")
+    if track.release_date:
+        info_lines.append(f"📅 **Released:** {track.release_date[:4]}")
+    if track.genre:
+        info_lines.append(f"🏷️ **Genre:** {track.genre}")
+    if track.duration_ms:
+        info_lines.append(f"⏱️ **Duration:** {format_duration(track.duration_ms)}")
+
+    header = "\n".join(info_lines)
+
     if status == "downloading":
         speed = state.get("speed", 0.0)
         if speed >= 1024 * 1024:
@@ -519,30 +526,27 @@ def render_progress_card(track: TrackInfo, state: dict) -> str:
         size_str = f"{downloaded_mb:.1f} MB / {total_mb:.1f} MB" if total_mb > 0 else f"{downloaded_mb:.1f} MB"
 
         return (
+            f"{header}\n\n"
             f"⬇️ **Downloading Audio...**\n"
-            f"🎵 **{track.title}**\n"
-            f"👤 _{track.artist_str}_\n\n"
             f"`[{bar}]` **{percent:.1f}%**\n"
             f"⚡ **Speed:** {speed_str} • ⏱️ **ETA:** {eta_str}\n"
             f"📦 **Size:** {size_str}"
         )
     elif status == "converting":
         return (
+            f"{header}\n\n"
             f"🎚️ **Converting & Tagging...**\n"
-            f"🎵 **{track.title}**\n"
-            f"👤 _{track.artist_str}_\n\n"
             f"`[▰▰▰▰▰▰▰▰▰▰▰▱]` **95.0%**\n"
             f"✨ Embedding 320kbps MP3 tags & HD cover art..."
         )
     elif status == "uploading":
         return (
+            f"{header}\n\n"
             f"📤 **Uploading to Telegram...**\n"
-            f"🎵 **{track.title}**\n"
-            f"👤 _{track.artist_str}_\n\n"
             f"`[▰▰▰▰▰▰▰▰▰▰▰▰]` **100%**\n"
             f"🚀 Delivering high-fidelity audio..."
         )
-    return f"⏳ Processing **{track.title}**..."
+    return f"{header}\n\n⏳ Processing..."
 
 async def send_track_to_user(
     chat_id: int,
@@ -562,11 +566,24 @@ async def send_track_to_user(
     }
 
     initial_text = render_progress_card(track, progress_state)
-    status_msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=initial_text,
-        parse_mode=constants.ParseMode.MARKDOWN,
-    )
+    cover_photo = track.cover_url or DEFAULT_COVER
+    is_photo = False
+
+    try:
+        status_msg = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=cover_photo,
+            caption=initial_text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        is_photo = True
+    except Exception:
+        status_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=initial_text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        is_photo = False
 
     def ytdl_progress_hook(d):
         if d.get("status") == "downloading":
@@ -593,7 +610,10 @@ async def send_track_to_user(
             try:
                 card = render_progress_card(track, progress_state)
                 if card != last_card:
-                    await status_msg.edit_text(card, parse_mode=constants.ParseMode.MARKDOWN)
+                    if is_photo:
+                        await status_msg.edit_caption(caption=card, parse_mode=constants.ParseMode.MARKDOWN)
+                    else:
+                        await status_msg.edit_text(text=card, parse_mode=constants.ParseMode.MARKDOWN)
                     last_card = card
                 await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
             except Exception:
@@ -618,7 +638,11 @@ async def send_track_to_user(
 
     try:
         if not success or not os.path.exists(filepath):
-            await status_msg.edit_text(f"❌ Failed to download **{track.title}**: {status}", parse_mode=constants.ParseMode.MARKDOWN)
+            err_msg = f"❌ Failed to download **{track.title}**: {status}"
+            if is_photo:
+                await status_msg.edit_caption(caption=err_msg, parse_mode=constants.ParseMode.MARKDOWN)
+            else:
+                await status_msg.edit_text(err_msg, parse_mode=constants.ParseMode.MARKDOWN)
             return
 
         # Prepare thumbnail bytes
@@ -635,7 +659,11 @@ async def send_track_to_user(
         progress_state["status"] = "uploading"
         progress_state["percent"] = 100.0
         try:
-            await status_msg.edit_text(render_progress_card(track, progress_state), parse_mode=constants.ParseMode.MARKDOWN)
+            card = render_progress_card(track, progress_state)
+            if is_photo:
+                await status_msg.edit_caption(caption=card, parse_mode=constants.ParseMode.MARKDOWN)
+            else:
+                await status_msg.edit_text(text=card, parse_mode=constants.ParseMode.MARKDOWN)
         except Exception:
             pass
 
