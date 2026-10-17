@@ -644,7 +644,7 @@ def render_standalone_progress(state: dict) -> str:
             f"<code>[{bar}]</code>\n\n"
             f"⚡ <b>Speed:</b> <code>{speed_str}</code>   •   ⏱ <b>ETA:</b> <code>{eta_str}</code>\n"
             f"📦 <b>Size:</b> <code>{size_str}</code>\n\n"
-            f"✨ <i>{esc(action_text)}</i>"
+            f"<i>{esc(action_text)}</i>"
             f"</blockquote>"
         )
     elif status == "converting":
