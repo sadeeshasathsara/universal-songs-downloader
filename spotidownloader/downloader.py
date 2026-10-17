@@ -210,32 +210,45 @@ class AudioDownloader:
             logger.info(f"Using yt-dlp config: {ytdlp_conf}")
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                search_results = ydl.extract_info(query, download=False)
+            # Step 1: Fast flat search (completes in < 1s instead of loading all video pages)
+            search_opts = dict(ydl_opts)
+            search_opts['extract_flat'] = 'in_playlist'
+
+            entries = []
+            with yt_dlp.YoutubeDL(search_opts) as ydl_search:
+                search_results = ydl_search.extract_info(query, download=False)
                 entries = search_results.get('entries', []) if search_results else []
                 if not entries:
                     fallback_query = f"ytsearch5:{track.query}"
-                    search_results = ydl.extract_info(fallback_query, download=False)
+                    search_results = ydl_search.extract_info(fallback_query, download=False)
                     entries = search_results.get('entries', []) if search_results else []
 
-                if not entries:
-                    return False, target_path, f"No audio match found on YouTube for '{track.query}'"
+            if not entries:
+                return False, target_path, f"No audio match found on YouTube for '{track.query}'"
 
-                candidates = self._rank_candidates(entries, track)
-                download_succeeded = False
-                last_error = ""
+            candidates = self._rank_candidates(entries, track)
+            download_succeeded = False
+            last_error = ""
 
-                # Try candidates in order; if one fails (e.g. 403 Forbidden), failover to the next!
+            # Step 2: Download candidates in ranked order; failover if unavailable or blocked
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 for candidate in candidates:
-                    video_url = candidate.get('webpage_url') or candidate.get('url') or f"https://www.youtube.com/watch?v={candidate.get('id')}"
+                    video_id = candidate.get('id')
+                    video_url = candidate.get('webpage_url') or candidate.get('url') or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
+                    if not video_url:
+                        continue
+
                     try:
-                        ydl.download([video_url])
+                        ret_code = ydl.download([video_url])
                         if os.path.exists(expected_tmp_out) and os.path.getsize(expected_tmp_out) > 1024:
                             download_succeeded = True
                             break
+                        else:
+                            last_error = f"Video {video_url} did not yield an audio stream"
+                            logger.warning(f"Candidate {video_url} produced no audio file, failing over to next candidate...")
                     except Exception as err:
                         last_error = str(err)
-                        logger.warning(f"Candidate {video_url} failed with: {err}, trying next candidate...")
+                        logger.warning(f"Candidate {video_url} failed ({err}), failing over to next candidate...")
                         if os.path.exists(expected_tmp_out):
                             try:
                                 os.remove(expected_tmp_out)
@@ -243,8 +256,8 @@ class AudioDownloader:
                                 pass
                         continue
 
-                if not download_succeeded:
-                    return False, target_path, f"Download failed across all candidates: {last_error}"
+            if not download_succeeded:
+                return False, target_path, f"Download failed across all candidates: {last_error}"
 
             # Finalize output file
             if os.path.exists(expected_tmp_out):
