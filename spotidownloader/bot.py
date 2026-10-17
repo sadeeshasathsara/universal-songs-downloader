@@ -6,6 +6,7 @@ import asyncio
 import tempfile
 import shutil
 import gc
+import random
 from logging.handlers import RotatingFileHandler
 from typing import Dict, Any, Optional
 
@@ -98,6 +99,7 @@ def set_cache(key: str, val: Any):
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
 AVATAR_PATH = os.path.join(ASSETS_DIR, "bot_avatar.jpg")
+WELCOME_COVER_PATH = os.path.join(ASSETS_DIR, "welcome_cover.png")
 DEFAULT_COVER = AVATAR_PATH if os.path.exists(AVATAR_PATH) else "https://i.scdn.co/image/ab67616d0000b273baf89eb11ec7c657805d2da0"
 
 def esc(val: Any) -> str:
@@ -167,7 +169,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         keyboard.append([InlineKeyboardButton("🛡️ Admin Dashboard", callback_data="admin:refresh")])
 
-    photo_obj = open(AVATAR_PATH, "rb") if os.path.exists(AVATAR_PATH) else DEFAULT_COVER
+    welcome_src = WELCOME_COVER_PATH if os.path.exists(WELCOME_COVER_PATH) else (AVATAR_PATH if os.path.exists(AVATAR_PATH) else DEFAULT_COVER)
+    photo_obj = open(welcome_src, "rb") if (isinstance(welcome_src, str) and os.path.exists(welcome_src)) else welcome_src
     try:
         await update.message.reply_photo(
             photo=photo_obj,
@@ -583,9 +586,25 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----------------- Download & Sender Helper -----------------
 
+STATUS_ING_PHRASES = [
+    "Resolving high-quality audio stream...",
+    "Finding optimal bitrate candidates...",
+    "Extracting audio stream metadata...",
+    "Establishing high-speed audio pipeline...",
+    "Matching track duration signatures...",
+    "Analyzing audio frequencies & bitrates...",
+    "Buffering initial audio chunks...",
+    "Fetching studio master audio...",
+    "Streaming high-bitrate audio packets...",
+    "Synchronizing audio stream...",
+    "Tuning audio pipeline...",
+    "Receiving audio segments...",
+]
+
 def render_standalone_progress(state: dict) -> str:
     status = state.get("status", "downloading")
     percent = max(0.0, min(state.get("percent", 0.0), 100.0))
+    action_text = state.get("action_text", "Resolving high-quality audio stream...")
 
     # Prominent 16-block progress bar
     total_blocks = 16
@@ -606,7 +625,8 @@ def render_standalone_progress(state: dict) -> str:
             f"⬇️ <b>Downloading Audio...</b> <b>{percent:.1f}%</b>\n"
             f"<code>[{bar}]</code>\n\n"
             f"⚡ <b>Speed:</b> <code>{speed_str}</code>   •   ⏱ <b>ETA:</b> <code>{eta_str}</code>\n"
-            f"📦 <b>Size:</b> <code>{size_str}</code>"
+            f"📦 <b>Size:</b> <code>{size_str}</code>\n\n"
+            f"✨ <i>{esc(action_text)}</i>"
             f"</blockquote>"
         )
     elif status == "converting":
@@ -615,7 +635,7 @@ def render_standalone_progress(state: dict) -> str:
             f"<blockquote>"
             f"🎚️ <b>Converting & Tagging...</b> <b>95.0%</b>\n"
             f"<code>[{full_bar}]</code>\n\n"
-            f"✨ <i>Embedding HD cover artwork & ID3 metadata...</i>"
+            f"✨ <i>{esc(action_text)}</i>"
             f"</blockquote>"
         )
     elif status == "uploading":
@@ -624,10 +644,10 @@ def render_standalone_progress(state: dict) -> str:
             f"<blockquote>"
             f"📤 <b>Uploading to Telegram...</b> <b>100%</b>\n"
             f"<code>[{full_bar}]</code>\n\n"
-            f"🚀 <i>Delivering audio file to chat...</i>"
+            f"🚀 <i>{esc(action_text)}</i>"
             f"</blockquote>"
         )
-    return "<blockquote>⏳ <i>Processing track...</i></blockquote>"
+    return f"<blockquote>⏳ <i>{esc(action_text)}</i></blockquote>"
 
 async def send_track_to_user(
     chat_id: int,
@@ -637,8 +657,10 @@ async def send_track_to_user(
     bitrate: str = "320",
 ):
     temp_dir = tempfile.mkdtemp(prefix="spotibot_")
+    current_action = random.choice(STATUS_ING_PHRASES)
     progress_state = {
         "status": "downloading",
+        "action_text": current_action,
         "percent": 0.0,
         "downloaded": 0,
         "total": 0,
@@ -688,7 +710,17 @@ async def send_track_to_user(
             speed = d.get("speed") or 0.0
             eta = d.get("eta") or 0
             if total > 0:
-                progress_state["percent"] = min(99.0, (downloaded / total) * 100.0)
+                pct = min(99.0, (downloaded / total) * 100.0)
+                progress_state["percent"] = pct
+                if pct < 35:
+                    progress_state["action_text"] = "Streaming high-bitrate audio packets..."
+                elif pct < 75:
+                    progress_state["action_text"] = "Downloading audio stream segments..."
+                else:
+                    progress_state["action_text"] = "Finalizing audio stream transfer..."
+            else:
+                progress_state["action_text"] = "Streaming studio master audio..."
+
             progress_state["downloaded"] = downloaded
             progress_state["total"] = total
             progress_state["speed"] = speed
@@ -696,14 +728,22 @@ async def send_track_to_user(
             progress_state["status"] = "downloading"
         elif d.get("status") == "finished":
             progress_state["status"] = "converting"
+            progress_state["action_text"] = "Embedding HD cover artwork & ID3 metadata..."
             progress_state["percent"] = 95.0
 
     stop_event = asyncio.Event()
 
     async def live_progress_reporter():
+        nonlocal current_action
         last_card = ""
         while not stop_event.is_set():
             try:
+                # If still waiting for initial downloaded bytes, randomly pick an "-ing" phrase
+                if progress_state["status"] == "downloading" and progress_state["downloaded"] == 0:
+                    choices = [p for p in STATUS_ING_PHRASES if p != current_action]
+                    current_action = random.choice(choices) if choices else random.choice(STATUS_ING_PHRASES)
+                    progress_state["action_text"] = current_action
+
                 card = render_standalone_progress(progress_state)
                 if card != last_card:
                     await progress_msg.edit_text(text=card, parse_mode=constants.ParseMode.HTML)
@@ -711,7 +751,7 @@ async def send_track_to_user(
                 await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
             except Exception:
                 pass
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.4)
 
     reporter_task = asyncio.create_task(live_progress_reporter())
 
@@ -747,6 +787,7 @@ async def send_track_to_user(
 
         # Update progress message to uploading phase (100%)
         progress_state["status"] = "uploading"
+        progress_state["action_text"] = "Delivering high-fidelity audio to chat..."
         progress_state["percent"] = 100.0
         try:
             await progress_msg.edit_text(
