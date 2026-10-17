@@ -1,5 +1,6 @@
 import os
 import uuid
+import html
 import logging
 import asyncio
 import tempfile
@@ -38,10 +39,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # In-memory storage for search results & Spotify sessions
-# Maps short UUID -> cached data
 CACHE: Dict[str, Any] = {}
 
-DEFAULT_COVER = "https://cdn-icons-png.flaticon.com/512/3844/3844724.png"
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+AVATAR_PATH = os.path.join(ASSETS_DIR, "bot_avatar.jpg")
+DEFAULT_COVER = AVATAR_PATH if os.path.exists(AVATAR_PATH) else "https://i.scdn.co/image/ab67616d0000b273baf89eb11ec7c657805d2da0"
+
+def esc(val: Any) -> str:
+    """Escapes strings for safe Telegram HTML rendering."""
+    return html.escape(str(val)) if val is not None else ""
 
 def format_duration(duration_ms: int) -> str:
     if not duration_ms:
@@ -50,6 +56,13 @@ def format_duration(duration_ms: int) -> str:
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
+
+def format_file_size(size_bytes: int) -> str:
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} TB"
 
 def get_user_settings(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
     fmt = context.user_data.get("format", os.getenv("DEFAULT_AUDIO_FORMAT", "mp3"))
@@ -70,15 +83,15 @@ def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "👋 **Welcome to Universal Songs Downloader!** 🎵\n\n"
-        "I can download and send high-fidelity audio (up to 320kbps MP3 / FLAC) "
-        "with complete ID3 tags and HD album artwork.\n\n"
-        "✨ **What you can do:**\n"
-        "• 🔍 **Search Songs**: Simply type any song or artist name (e.g. `Blinding Lights`)\n"
-        "• 🎶 **Spotify Track**: Paste any track link\n"
-        "• 💿 **Spotify Album**: Paste any album link\n"
-        "• 📜 **Spotify Playlist**: Paste any playlist link\n\n"
-        "Use the buttons below to configure quality or get help:"
+        "<blockquote>👋 <b>Welcome to Universal Songs Downloader!</b> 🎵</blockquote>\n\n"
+        "Download and receive studio-quality audio (up to <b>320kbps MP3 / FLAC</b>) "
+        "with embedded ID3 tags and high-resolution cover artwork.\n\n"
+        "<b>✨ How to Use:</b>\n"
+        "• 🔍 <b>Search:</b> Type any song or artist (e.g. <code>Zd8</code> or <code>Blinding Lights</code>)\n"
+        "• 🎶 <b>Spotify Track:</b> Paste any song URL\n"
+        "• 💿 <b>Spotify Album:</b> Paste any album URL\n"
+        "• 📜 <b>Spotify Playlist:</b> Paste any playlist URL\n\n"
+        "<blockquote>👇 <i>Use the buttons below to configure quality or get help:</i></blockquote>"
     )
 
     keyboard = [
@@ -91,21 +104,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    avatar_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "bot_avatar.jpg")
-    photo_obj = open(avatar_path, "rb") if os.path.exists(avatar_path) else DEFAULT_COVER
-
+    photo_obj = open(AVATAR_PATH, "rb") if os.path.exists(AVATAR_PATH) else DEFAULT_COVER
     try:
         await update.message.reply_photo(
             photo=photo_obj,
             caption=welcome_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    except Exception:
-        await update.message.reply_photo(
-            photo=DEFAULT_COVER,
-            caption=welcome_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     finally:
@@ -114,32 +118,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📖 **How to Use Universal Songs Downloader**\n\n"
-        "1️⃣ **Song Search:**\n"
-        "Just type a song name, e.g. `Coldplay Viva La Vida` or `Adele Hello`.\n"
-        "The bot will display the top matching songs with thumbnails and download buttons.\n\n"
-        "2️⃣ **Spotify Links:**\n"
-        "Paste any link directly into the chat:\n"
-        "• `https://open.spotify.com/track/...`\n"
-        "• `https://open.spotify.com/album/...`\n"
-        "• `https://open.spotify.com/playlist/...`\n\n"
-        "3️⃣ **Audio Quality:**\n"
-        "Default quality is **320kbps MP3**. You can switch to FLAC, M4A, or 192kbps in Settings.\n\n"
-        "⚡ All downloaded files include embedded artist, album, track number, and cover art!"
+        "<blockquote>📖 <b>Universal Songs Downloader Guide</b></blockquote>\n\n"
+        "<b>1️⃣ Search Songs by Name:</b>\n"
+        "Just type any song title or artist into the chat (e.g. <code>Zd8</code> or <code>Adele Hello</code>). "
+        "The bot will display matching songs with individual download buttons.\n\n"
+        "<b>2️⃣ Download from Spotify:</b>\n"
+        "Paste any Spotify URL directly:\n"
+        "• <code>https://open.spotify.com/track/...</code>\n"
+        "• <code>https://open.spotify.com/album/...</code>\n"
+        "• <code>https://open.spotify.com/playlist/...</code>\n\n"
+        "<b>3️⃣ Audio Quality:</b>\n"
+        "Default quality is <b>320kbps MP3</b>. You can customize this to FLAC, M4A, or 192kbps in <b>/settings</b>.\n\n"
+        "<blockquote>⚡ <i>All files include embedded cover art, artist, and album tags!</i></blockquote>"
     )
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
+        await update.callback_query.message.reply_text(help_text, parse_mode=constants.ParseMode.HTML)
     else:
-        await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
+        await update.message.reply_text(help_text, parse_mode=constants.ParseMode.HTML)
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fmt, bitrate = get_user_settings(context)
     text = (
-        f"⚙️ **Audio Quality Settings**\n\n"
-        f"Current Format: **{fmt.upper()}**\n"
-        f"Current Bitrate: **{bitrate} kbps**\n\n"
-        "Select your preferred audio output format:"
+        "<blockquote>⚙️ <b>Audio Quality Settings</b></blockquote>\n\n"
+        f"• Current Format: <b>{fmt.upper()}</b>\n"
+        f"• Current Bitrate: <b>{bitrate} kbps</b>\n\n"
+        "<blockquote>👇 <i>Select your preferred audio format:</i></blockquote>"
     )
     keyboard = [
         [
@@ -156,20 +160,26 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_caption(
-            caption=text,
-            parse_mode=constants.ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+        try:
+            await update.callback_query.edit_message_caption(
+                caption=text,
+                parse_mode=constants.ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except Exception:
+            await update.callback_query.message.reply_text(
+                text=text,
+                parse_mode=constants.ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
     else:
-        await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(text, parse_mode=constants.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text:
         return
 
-    # Check if text is a Spotify URL
     parsed = parse_spotify_url(text)
     if parsed:
         await handle_spotify_url(update, context, text)
@@ -177,19 +187,22 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_song_search(update, context, text)
 
 async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    status_msg = await update.message.reply_text(f"🔍 Searching for **{query}**...", parse_mode=constants.ParseMode.MARKDOWN)
+    status_msg = await update.message.reply_text(
+        f"🔍 <i>Searching for <b>{esc(query)}</b>...</i>",
+        parse_mode=constants.ParseMode.HTML
+    )
 
-    # Perform search asynchronously
     results = await asyncio.to_thread(search_songs, query, 5)
 
     if not results:
-        await status_msg.edit_text(f"❌ No songs found for: *{query}*.\nTry searching with artist name.", parse_mode=constants.ParseMode.MARKDOWN)
+        await status_msg.edit_text(
+            f"❌ <i>No songs found for: <b>{esc(query)}</b>. Try searching with artist name.</i>",
+            parse_mode=constants.ParseMode.HTML
+        )
         return
 
-    # Delete status message
     await status_msg.delete()
 
-    # Cache results
     cache_id = uuid.uuid4().hex[:8]
     CACHE[cache_id] = {
         "type": "search",
@@ -197,26 +210,23 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "tracks": results,
     }
 
-    # Format caption with search results list
+    # Format beautiful caption with search results list
     caption_lines = [
-        f"🔍 **Search Results for:** _{query}_\n"
+        f"<blockquote>🔍 <b>Search Results for:</b> <i>{esc(query)}</i></blockquote>\n"
     ]
     for idx, track in enumerate(results, start=1):
         dur = format_duration(track.duration_ms)
-        caption_lines.append(f"**{idx}.** {track.title} — _{track.artist_str}_ `[{dur}]`")
+        caption_lines.append(f"<b>{idx}.</b> {esc(track.title)} — <i>{esc(track.artist_str)}</i> <code>[{dur}]</code>")
 
-    caption_lines.append("\n👇 **Tap a song below to download:**")
+    caption_lines.append("\n<blockquote>👇 <b>Tap a song below to download:</b></blockquote>")
     caption_text = "\n".join(caption_lines)
 
     keyboard = []
-
     for idx, track in enumerate(results, start=1):
         dur = format_duration(track.duration_ms)
-
-        # Format button text with title, artist, and duration
         dur_tag = f"[{dur}]"
         raw_info = f"{idx}. {track.title} — {track.artist_str}"
-        max_len = 45 - len(dur_tag)
+        max_len = 44 - len(dur_tag)
         if len(raw_info) > max_len:
             btn_text = f"{raw_info[:max_len-1]}… {dur_tag}"
         else:
@@ -225,9 +235,8 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         btn = InlineKeyboardButton(f"🎵 {btn_text}", callback_data=f"dl:s:{cache_id}:{idx-1}")
         keyboard.append([btn])
 
-    # Add extra action row
     action_row = [
-        InlineKeyboardButton("⬇️ Download All", callback_data=f"dl:s:{cache_id}:all"),
+        InlineKeyboardButton("⬇️ Download All (1-5)", callback_data=f"dl:s:{cache_id}:all"),
         InlineKeyboardButton("❌ Dismiss", callback_data="ui:dismiss"),
     ]
     keyboard.append(action_row)
@@ -238,25 +247,24 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_photo(
             photo=cover_photo,
             caption=caption_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     except Exception:
-        # Fallback to plain text if photo URL has issue
         await update.message.reply_text(
             text=caption_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
 async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str):
-    status_msg = await update.message.reply_text("🔄 Resolving Spotify metadata...")
+    status_msg = await update.message.reply_text("🔄 <i>Resolving Spotify metadata...</i>", parse_mode=constants.ParseMode.HTML)
 
     spotify = SpotifyClient()
     try:
         collection: CollectionInfo = await asyncio.to_thread(spotify.fetch, url)
     except Exception as e:
-        await status_msg.edit_text(f"❌ Could not load Spotify link: {e}")
+        await status_msg.edit_text(f"❌ <i>Could not load Spotify link: {esc(e)}</i>", parse_mode=constants.ParseMode.HTML)
         return
 
     await status_msg.delete()
@@ -272,15 +280,16 @@ async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if collection.type == "track":
         track = collection.tracks[0]
         caption = (
-            f"🎵 **{track.title}**\n"
-            f"👤 **Artist:** {track.artist_str}\n"
-            f"💿 **Album:** {track.album}\n"
-            f"⏱️ **Duration:** {format_duration(track.duration_ms)}\n"
-            f"📅 **Released:** {track.release_date or 'N/A'}"
+            f"<blockquote>🎵 <b>{esc(track.title)}</b></blockquote>\n\n"
+            f"👤 <b>Artist:</b> {esc(track.artist_str)}\n"
+            f"💿 <b>Album:</b> {esc(track.album)}\n"
+            f"⏱ <b>Duration:</b> {format_duration(track.duration_ms)}\n"
+            f"📅 <b>Released:</b> {esc(track.release_date or 'N/A')}\n\n"
+            f"<blockquote>👇 <i>Select format to download:</i></blockquote>"
         )
         keyboard = [
             [
-                InlineKeyboardButton("⬇️ Download (320kbps MP3)", callback_data=f"dl:t:{cache_id}:mp3"),
+                InlineKeyboardButton("⬇️ Download MP3 (320kbps)", callback_data=f"dl:t:{cache_id}:mp3"),
                 InlineKeyboardButton("⬇️ FLAC", callback_data=f"dl:t:{cache_id}:flac"),
             ],
             [
@@ -290,9 +299,10 @@ async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     elif collection.type in ("album", "playlist", "artist"):
         type_name = collection.type.capitalize()
         caption = (
-            f"💿 **{type_name}: {collection.title}**\n"
-            f"🔢 **Total Tracks:** {collection.total_count} songs\n"
-            f"ℹ️ {collection.description}"
+            f"<blockquote>💿 <b>{esc(type_name)}: {esc(collection.title)}</b></blockquote>\n\n"
+            f"🔢 <b>Total Tracks:</b> {collection.total_count} songs\n"
+            f"ℹ️ {esc(collection.description)}\n\n"
+            f"<blockquote>👇 <i>Download full collection or view tracklist:</i></blockquote>"
         )
         keyboard = [
             [
@@ -304,20 +314,20 @@ async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             ]
         ]
     else:
-        caption = f"🎵 {collection.title}"
+        caption = f"🎵 <b>{esc(collection.title)}</b>"
         keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="ui:dismiss")]]
 
     try:
         await update.message.reply_photo(
             photo=cover,
             caption=caption,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     except Exception:
         await update.message.reply_text(
             text=caption,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
@@ -340,10 +350,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await settings_command(update, context)
         return
 
+    if data == "ui:back_start":
+        await start_command(update, context)
+        return
+
     if data == "ui:search_hint":
         await query.message.reply_text(
-            "💡 Simply type any song title or artist name into the chat and send it!\n"
-            "Example: `The Weeknd Blinding Lights`"
+            "<blockquote>💡 <b>Search Tip</b></blockquote>\n\n"
+            "Simply type any song title or artist name into the chat and send it!\n"
+            "Example: <code>Zd8</code> or <code>The Weeknd Blinding Lights</code>",
+            parse_mode=constants.ParseMode.HTML
         )
         return
 
@@ -354,13 +370,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await settings_command(update, context)
         return
 
-    # View tracklist pagination: view:{cache_id}:{page}
+    # View tracklist pagination
     if data.startswith("view:"):
         _, cache_id, page_str = data.split(":")
         page = int(page_str)
         cached = CACHE.get(cache_id)
         if not cached:
-            await query.message.reply_text("⚠️ Session expired. Please paste the link again.")
+            await query.message.reply_text("⚠️ <i>Session expired. Please paste the link again.</i>", parse_mode=constants.ParseMode.HTML)
             return
 
         collection: CollectionInfo = cached["collection"]
@@ -370,11 +386,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start_idx = page * per_page
         end_idx = min(start_idx + per_page, len(tracks))
 
-        lines = [f"📋 **Tracklist: {collection.title}** (Page {page+1}/{total_pages})\n"]
+        lines = [f"<blockquote>📋 <b>Tracklist: {esc(collection.title)}</b> (Page {page+1}/{total_pages})</blockquote>\n"]
         for i in range(start_idx, end_idx):
             t = tracks[i]
             dur = format_duration(t.duration_ms)
-            lines.append(f"**{i+1}.** {t.title} - _{t.artist_str}_ `[{dur}]`")
+            lines.append(f"<b>{i+1}.</b> {esc(t.title)} — <i>{esc(t.artist_str)}</i> <code>[{dur}]</code>")
 
         nav_buttons = []
         if page > 0:
@@ -392,17 +408,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             text="\n".join(lines),
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
-    # Download track from Spotify: dl:t:{cache_id}:{fmt}
+    # Download track from Spotify
     if data.startswith("dl:t:"):
         _, _, cache_id, chosen_fmt = data.split(":")
         cached = CACHE.get(cache_id)
         if not cached:
-            await query.message.reply_text("⚠️ Session expired. Please send the link again.")
+            await query.message.reply_text("⚠️ <i>Session expired. Please send the link again.</i>", parse_mode=constants.ParseMode.HTML)
             return
 
         track: TrackInfo = cached["collection"].tracks[0]
@@ -416,12 +432,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Download from search result: dl:s:{cache_id}:{item}
+    # Download from search result
     if data.startswith("dl:s:"):
         _, _, cache_id, item = data.split(":")
         cached = CACHE.get(cache_id)
         if not cached:
-            await query.message.reply_text("⚠️ Session expired. Please search again.")
+            await query.message.reply_text("⚠️ <i>Session expired. Please search again.</i>", parse_mode=constants.ParseMode.HTML)
             return
 
         tracks = cached["tracks"]
@@ -448,12 +464,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # Download collection: dl:c:{cache_id}:all
+    # Download collection
     if data.startswith("dl:c:"):
         _, _, cache_id, _ = data.split(":")
         cached = CACHE.get(cache_id)
         if not cached:
-            await query.message.reply_text("⚠️ Session expired. Please paste the link again.")
+            await query.message.reply_text("⚠️ <i>Session expired. Please paste the link again.</i>", parse_mode=constants.ParseMode.HTML)
             return
 
         collection: CollectionInfo = cached["collection"]
@@ -461,14 +477,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = collection.total_count
 
         status_msg = await query.message.reply_text(
-            f"🚀 Starting batch download for **{collection.title}** ({total} songs)...",
-            parse_mode=constants.ParseMode.MARKDOWN,
+            f"🚀 <i>Starting batch download for <b>{esc(collection.title)}</b> ({total} songs)...</i>",
+            parse_mode=constants.ParseMode.HTML,
         )
 
         for idx, track in enumerate(collection.tracks, start=1):
             await status_msg.edit_text(
-                f"⬇️ Downloading ({idx}/{total}): **{track.title}**...",
-                parse_mode=constants.ParseMode.MARKDOWN,
+                f"⬇️ <i>Downloading ({idx}/{total}): <b>{esc(track.title)}</b>...</i>",
+                parse_mode=constants.ParseMode.HTML,
             )
             await send_track_to_user(
                 chat_id=query.message.chat_id,
@@ -479,74 +495,58 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         await status_msg.edit_text(
-            f"✅ **Completed downloading all {total} songs for:** {collection.title}",
-            parse_mode=constants.ParseMode.MARKDOWN,
+            f"✅ <b>Completed downloading all {total} songs for:</b> {esc(collection.title)}",
+            parse_mode=constants.ParseMode.HTML,
         )
         return
 
 # ----------------- Download & Sender Helper -----------------
 
-def render_progress_card(track: TrackInfo, state: dict) -> str:
+def render_standalone_progress(state: dict) -> str:
     status = state.get("status", "downloading")
     percent = max(0.0, min(state.get("percent", 0.0), 100.0))
 
-    # 12-block progress bar
-    total_blocks = 12
+    # Prominent 16-block progress bar
+    total_blocks = 16
     filled = int((percent / 100.0) * total_blocks)
     bar = "▰" * filled + "▱" * (total_blocks - filled)
 
-    info_lines = [
-        f"🎶 **Track:** {track.title}",
-        f"👤 **Artist / Singer:** {track.artist_str}",
-    ]
-    if track.album and track.album not in ("Single", "Unknown Album"):
-        info_lines.append(f"💿 **Album:** {track.album}")
-    if track.release_date:
-        info_lines.append(f"📅 **Released:** {track.release_date[:4]}")
-    if track.genre:
-        info_lines.append(f"🏷️ **Genre:** {track.genre}")
-    if track.duration_ms:
-        info_lines.append(f"⏱️ **Duration:** {format_duration(track.duration_ms)}")
-
-    header = "\n".join(info_lines)
-
     if status == "downloading":
         speed = state.get("speed", 0.0)
-        if speed >= 1024 * 1024:
-            speed_str = f"{speed / (1024 * 1024):.1f} MB/s"
-        elif speed > 0:
-            speed_str = f"{speed / 1024:.0f} KB/s"
-        else:
-            speed_str = "-- KB/s"
-
+        speed_str = f"{speed / (1024 * 1024):.1f} MB/s" if speed >= 1024 * 1024 else (f"{speed / 1024:.0f} KB/s" if speed > 0 else "-- KB/s")
         downloaded_mb = state.get("downloaded", 0) / (1024 * 1024)
         total_mb = state.get("total", 0) / (1024 * 1024)
         eta = state.get("eta", 0)
         eta_str = f"{eta // 60:02d}:{eta % 60:02d}" if eta and eta > 0 else "--:--"
-        size_str = f"{downloaded_mb:.1f} MB / {total_mb:.1f} MB" if total_mb > 0 else f"{downloaded_mb:.1f} MB"
+        size_str = f"{downloaded_mb:.1f} / {total_mb:.1f} MB" if total_mb > 0 else f"{downloaded_mb:.1f} MB"
 
         return (
-            f"{header}\n\n"
-            f"⬇️ **Downloading Audio...**\n"
-            f"`[{bar}]` **{percent:.1f}%**\n"
-            f"⚡ **Speed:** {speed_str} • ⏱️ **ETA:** {eta_str}\n"
-            f"📦 **Size:** {size_str}"
+            f"<blockquote>"
+            f"⬇️ <b>Downloading Audio...</b> <b>{percent:.1f}%</b>\n"
+            f"<code>[{bar}]</code>\n\n"
+            f"⚡ <b>Speed:</b> <code>{speed_str}</code>   •   ⏱ <b>ETA:</b> <code>{eta_str}</code>\n"
+            f"📦 <b>Size:</b> <code>{size_str}</code>"
+            f"</blockquote>"
         )
     elif status == "converting":
+        full_bar = "▰" * 15 + "▱"
         return (
-            f"{header}\n\n"
-            f"🎚️ **Converting & Tagging...**\n"
-            f"`[▰▰▰▰▰▰▰▰▰▰▰▱]` **95.0%**\n"
-            f"✨ Embedding 320kbps MP3 tags & HD cover art..."
+            f"<blockquote>"
+            f"🎚️ <b>Converting & Tagging...</b> <b>95.0%</b>\n"
+            f"<code>[{full_bar}]</code>\n\n"
+            f"✨ <i>Embedding HD cover artwork & ID3 metadata...</i>"
+            f"</blockquote>"
         )
     elif status == "uploading":
+        full_bar = "▰" * 16
         return (
-            f"{header}\n\n"
-            f"📤 **Uploading to Telegram...**\n"
-            f"`[▰▰▰▰▰▰▰▰▰▰▰▰]` **100%**\n"
-            f"🚀 Delivering high-fidelity audio..."
+            f"<blockquote>"
+            f"📤 <b>Uploading to Telegram...</b> <b>100%</b>\n"
+            f"<code>[{full_bar}]</code>\n\n"
+            f"🚀 <i>Delivering audio file to chat...</i>"
+            f"</blockquote>"
         )
-    return f"{header}\n\n⏳ Processing..."
+    return "<blockquote>⏳ <i>Processing track...</i></blockquote>"
 
 async def send_track_to_user(
     chat_id: int,
@@ -565,25 +565,40 @@ async def send_track_to_user(
         "eta": 0,
     }
 
-    initial_text = render_progress_card(track, progress_state)
+    dur_str = format_duration(track.duration_ms)
+    album_display = track.album if track.album and track.album not in ("Single", "Unknown Album") else "Single"
     cover_photo = track.cover_url or DEFAULT_COVER
-    is_photo = False
+
+    # 1. Send permanent photo card with thumbnail & song details
+    card_caption = (
+        f"🎵 <b>{esc(track.title)}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Artist:</b> {esc(track.artist_str)}\n"
+        f"💿 <b>Album:</b> {esc(album_display)}\n"
+        f"⏱ <b>Duration:</b> {dur_str}  •  <b>Quality:</b> {audio_format.upper()} ({bitrate}k)\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
 
     try:
-        status_msg = await context.bot.send_photo(
+        await context.bot.send_photo(
             chat_id=chat_id,
             photo=cover_photo,
-            caption=initial_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            caption=card_caption,
+            parse_mode=constants.ParseMode.HTML,
         )
-        is_photo = True
     except Exception:
-        status_msg = await context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
-            text=initial_text,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            text=card_caption,
+            parse_mode=constants.ParseMode.HTML,
         )
-        is_photo = False
+
+    # 2. Send temporary progress message directly below the card
+    progress_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=render_standalone_progress(progress_state),
+        parse_mode=constants.ParseMode.HTML,
+    )
 
     def ytdl_progress_hook(d):
         if d.get("status") == "downloading":
@@ -605,15 +620,12 @@ async def send_track_to_user(
     stop_event = asyncio.Event()
 
     async def live_progress_reporter():
-        last_card = initial_text
+        last_card = ""
         while not stop_event.is_set():
             try:
-                card = render_progress_card(track, progress_state)
+                card = render_standalone_progress(progress_state)
                 if card != last_card:
-                    if is_photo:
-                        await status_msg.edit_caption(caption=card, parse_mode=constants.ParseMode.MARKDOWN)
-                    else:
-                        await status_msg.edit_text(text=card, parse_mode=constants.ParseMode.MARKDOWN)
+                    await progress_msg.edit_text(text=card, parse_mode=constants.ParseMode.HTML)
                     last_card = card
                 await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
             except Exception:
@@ -638,11 +650,8 @@ async def send_track_to_user(
 
     try:
         if not success or not os.path.exists(filepath):
-            err_msg = f"❌ Failed to download **{track.title}**: {status}"
-            if is_photo:
-                await status_msg.edit_caption(caption=err_msg, parse_mode=constants.ParseMode.MARKDOWN)
-            else:
-                await status_msg.edit_text(err_msg, parse_mode=constants.ParseMode.MARKDOWN)
+            err_msg = f"❌ <b>Failed to download {esc(track.title)}:</b>\n<i>{esc(status)}</i>"
+            await progress_msg.edit_text(text=err_msg, parse_mode=constants.ParseMode.HTML)
             return
 
         # Prepare thumbnail bytes
@@ -655,19 +664,18 @@ async def send_track_to_user(
             except Exception:
                 pass
 
-        # Update card to uploading phase (100%)
+        # Update progress message to uploading phase (100%)
         progress_state["status"] = "uploading"
         progress_state["percent"] = 100.0
         try:
-            card = render_progress_card(track, progress_state)
-            if is_photo:
-                await status_msg.edit_caption(caption=card, parse_mode=constants.ParseMode.MARKDOWN)
-            else:
-                await status_msg.edit_text(text=card, parse_mode=constants.ParseMode.MARKDOWN)
+            await progress_msg.edit_text(
+                text=render_standalone_progress(progress_state),
+                parse_mode=constants.ParseMode.HTML
+            )
         except Exception:
             pass
 
-        # Upload audio file with extended timeouts for large files
+        # Deliver audio file directly under the card
         bot_username = context.bot.username or "UniversalSongsDownloader"
         duration_sec = int(track.duration_ms / 1000) if track.duration_ms else None
 
@@ -679,25 +687,30 @@ async def send_track_to_user(
                 performer=track.artist_str,
                 duration=duration_sec,
                 thumbnail=thumb_bytes,
-                caption=f"🎵 **{track.title}** — {track.artist_str}\n💿 {track.album}\n⚡ @{bot_username}",
-                parse_mode=constants.ParseMode.MARKDOWN,
+                caption=f"🎵 <b>{esc(track.title)}</b> — <i>{esc(track.artist_str)}</i>\n⚡ @{bot_username}",
+                parse_mode=constants.ParseMode.HTML,
                 read_timeout=300,
                 write_timeout=300,
                 connect_timeout=60,
             )
 
-        # Delete status message on success
-        await status_msg.delete()
+        # Delete the temporary progress message so chat remains clean!
+        try:
+            await progress_msg.delete()
+        except Exception:
+            pass
 
     except Exception as e:
         logger.error(f"Error sending track {track.title}: {e}")
         try:
-            await status_msg.edit_text(f"⚠️ Error processing {track.title}: {e}")
+            await progress_msg.edit_text(f"⚠️ <i>Error processing {esc(track.title)}: {esc(e)}</i>", parse_mode=constants.ParseMode.HTML)
         except Exception:
             pass
     finally:
         # Clean up temporary directory
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
