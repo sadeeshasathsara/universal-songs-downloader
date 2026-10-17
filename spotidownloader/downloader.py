@@ -195,7 +195,6 @@ class AudioDownloader:
             'noplaylist': True,
             'retries': 5,
             'fragment_retries': 5,
-            'js_runtimes': {'node': {}},
             'progress_hooks': [ydl_hook],
             # Allow remote EJS solver script as a list of components
             'remote_components': ['ejs:github'],
