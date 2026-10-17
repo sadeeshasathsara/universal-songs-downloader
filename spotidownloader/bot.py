@@ -496,6 +496,19 @@ async def send_track_to_user(
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
+    # Send chat action while downloading and converting
+    async def keep_alive_action():
+        try:
+            while True:
+                await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_VOICE)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    action_task = asyncio.create_task(keep_alive_action())
+
     try:
         # Download in worker thread
         success, filepath, status = await asyncio.to_thread(
@@ -505,7 +518,10 @@ async def send_track_to_user(
             audio_format,
             bitrate,
         )
+    finally:
+        action_task.cancel()
 
+    try:
         if not success or not os.path.exists(filepath):
             await status_msg.edit_text(f"❌ Failed to download **{track.title}**: {status}", parse_mode=constants.ParseMode.MARKDOWN)
             return
@@ -522,7 +538,7 @@ async def send_track_to_user(
 
         await status_msg.edit_text(f"📤 Uploading **{track.title}** to Telegram...", parse_mode=constants.ParseMode.MARKDOWN)
 
-        # Upload audio file
+        # Upload audio file with extended timeouts for large files
         bot_username = context.bot.username or "UniversalSongsDownloader"
         duration_sec = int(track.duration_ms / 1000) if track.duration_ms else None
 
@@ -536,6 +552,9 @@ async def send_track_to_user(
                 thumbnail=thumb_bytes,
                 caption=f"🎵 **{track.title}** — {track.artist_str}\n💿 {track.album}\n⚡ @{bot_username}",
                 parse_mode=constants.ParseMode.MARKDOWN,
+                read_timeout=300,
+                write_timeout=300,
+                connect_timeout=60,
             )
 
         # Delete status message on success
@@ -557,7 +576,15 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN not found in environment!")
         sys.exit(1)
 
-    application = Application.builder().token(token).build()
+    application = (
+        Application.builder()
+        .token(token)
+        .read_timeout(300)
+        .write_timeout(300)
+        .connect_timeout(60)
+        .pool_timeout(60)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
