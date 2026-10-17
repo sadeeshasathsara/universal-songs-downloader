@@ -1,24 +1,30 @@
 # 🎵 SpotiDownloader CLI
 
-A high-performance, command-line Spotify downloader built with Python, `yt-dlp`, and `mutagen`. It fetches metadata from Spotify, downloads high-fidelity audio from YouTube/YouTube Music, converts it to your chosen format (MP3 up to 320kbps, M4A, or FLAC), and automatically embeds complete ID3 tags and high-resolution album artwork.
+A high-performance, command-line Spotify downloader and song search tool built with Python, `yt-dlp`, and `mutagen`.
+
+Download tracks, albums, playlists, or simply search by song name! It fetches studio metadata, downloads high-fidelity audio from YouTube/YouTube Music, converts it to your chosen format (MP3 up to 320kbps, M4A, or FLAC), and automatically embeds complete ID3 tags and high-resolution album artwork (up to 1000x1000).
 
 ---
 
 ## ✨ Features
 
-- **No Spotify API Keys Required**: Seamlessly extracts track, album, and playlist metadata out-of-the-box.
-- **Supports All Spotify URLs**:
-  - 🎵 **Individual Tracks**: `https://open.spotify.com/track/...`
+- **🔍 Direct Song Search**:
+  - Don't have a Spotify URL? Just type any song name or artist (e.g. `Blinding Lights` or `Ed Sheeran Shape of You`).
+  - Displays top search results with artist, album, and duration.
+  - Interactive selection (pick 1, multi-select like `1,3`, or `all`).
+  - `--yes` (`-y`) flag for instant auto-download of top match.
+- **🎵 All Spotify URLs Supported**:
+  - 🎶 **Individual Tracks**: `https://open.spotify.com/track/...`
   - 💿 **Full Albums**: `https://open.spotify.com/album/...` (batch download and organization)
   - 📜 **Playlists**: `https://open.spotify.com/playlist/...`
   - 🎤 **Artist Top Tracks**: `https://open.spotify.com/artist/...`
+- **No Spotify API Keys or Account Required**: Seamlessly works out-of-the-box.
 - **Embedded Metadata & High-Res Artwork**:
-  - Song Title
-  - Contributing Artists
+  - Song Title & Artists
   - Album Title & Album Artist
   - Track Number & Total Count
   - Release Date / Year
-  - High-resolution cover artwork directly embedded into audio files
+  - High-resolution cover artwork (up to 1000x1000) directly embedded into audio files
 - **Audio Quality & Formats**:
   - MP3 (320kbps, 256kbps, 192kbps)
   - M4A (AAC)
@@ -39,8 +45,6 @@ A high-performance, command-line Spotify downloader built with Python, `yt-dlp`,
 - Internet connection
 
 ### 2. Setup (If not already installed)
-Create and activate your virtual environment:
-
 ```powershell
 # Create virtual environment
 python -m venv .venv
@@ -56,52 +60,56 @@ pip install -r requirements.txt
 
 ## 🎧 Usage
 
-### Interactive Mode
-Simply run the script without any arguments:
+### 1. Interactive Mode
+Simply run the tool without arguments:
 
 ```powershell
+.\run.bat
+# or
 python main.py
 ```
-*(Or on Windows, just double-click or run `.\run.bat`)*
 
-You will be presented with a prompt:
+You can type **any song name** or paste **any Spotify URL**:
+```text
+Enter Spotify URL or Song Name (or 'q' to quit): Shape of You
 ```
-Enter Spotify Track, Album, or Playlist URL (or 'q' to quit):
-```
 
-### Direct CLI Commands
-
-#### 1. Download a Single Song
+### 2. Direct Search from Terminal
 ```powershell
+# Search interactively (shows top matches to choose from)
+python main.py "The Weeknd Blinding Lights"
+
+# Search and automatically download the top match (-y)
+python main.py "Coldplay Viva La Vida" -y
+```
+
+### 3. Direct Spotify URL Downloads
+
+```powershell
+# Single song
 python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT
-```
 
-#### 2. Download an Entire Album
-```powershell
+# Entire Album
 python main.py https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy
-```
-*Albums are automatically organized into subfolders with the album name.*
 
-#### 3. Download a Full Playlist
-```powershell
+# Playlist
 python main.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
 ```
 
-#### 4. Custom Output Directory
+### 4. Custom Output Directory & Audio Quality
+
 ```powershell
-python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -o "C:\Music\Favorites"
-```
+# Custom destination folder
+python main.py "Daft Punk Get Lucky" -o "C:\Music\Favorites" -y
 
-#### 5. Custom Format and Quality
-```powershell
-# FLAC Lossless
-python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -f flac
+# Download as FLAC Lossless
+python main.py "Adele Easy On Me" -f flac -y
 
-# M4A format
-python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -f m4a
+# Download as M4A
+python main.py "Queen Bohemian Rhapsody" -f m4a -y
 
-# 256kbps MP3
-python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -b 256
+# Custom MP3 bitrate (256kbps)
+python main.py "Taylor Swift Cruel Summer" -b 256 -y
 ```
 
 ---
@@ -110,7 +118,8 @@ python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -b 256
 
 | Flag | Default | Description |
 |---|---|---|
-| `url` | *None* | Spotify track, album, or playlist URL (runs interactive mode if omitted) |
+| `query` | *None* | Spotify URL OR song name/artist to search |
+| `-y`, `--yes` | `False` | Auto-confirm and download the top search match without prompting |
 | `-o`, `--output` | `downloads` | Destination folder for downloaded songs |
 | `-f`, `--format` | `mp3` | Audio container format (`mp3`, `m4a`, `flac`) |
 | `-b`, `--bitrate` | `320` | Audio bitrate in kbps (`320`, `256`, `192`, `128`) |
@@ -126,6 +135,7 @@ python main.py https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -b 256
 ├── spotidownloader/
 │   ├── __init__.py         # Package entry
 │   ├── models.py           # TrackInfo & CollectionInfo data models
+│   ├── search.py           # iTunes & YouTube song search engine
 │   ├── spotify.py          # Spotify metadata scraping & URL resolver
 │   ├── downloader.py       # Audio search, download & FFmpeg conversion pipeline
 │   ├── tagger.py           # Mutagen ID3/M4A/FLAC tag & album art embedder
