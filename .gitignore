@@ -20,3 +20,5 @@ test_downloads/
 # Temporary files
 .tmp_*
 *.log
+data/
+

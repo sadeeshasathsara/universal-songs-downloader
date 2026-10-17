@@ -5,6 +5,8 @@ import logging
 import asyncio
 import tempfile
 import shutil
+import gc
+from logging.handlers import RotatingFileHandler
 from typing import Dict, Any, Optional
 
 import requests
@@ -28,18 +30,71 @@ from .spotify import SpotifyClient, parse_spotify_url
 from .downloader import AudioDownloader
 from .search import search_songs
 from .models import CollectionInfo, TrackInfo
+from .storage import BotDatabase, DATA_DIR
+from .admin import (
+    is_admin,
+    admin_command,
+    stats_command,
+    broadcast_command,
+    logs_command,
+    sendlog_command,
+    ban_command,
+    unban_command,
+    userinfo_command,
+    clearcache_command,
+    restart_command,
+    admin_callback_router,
+)
 
 # Load environment variables
 load_dotenv()
 
+# Setup Dual Logging (Console + File)
+os.makedirs(DATA_DIR, exist_ok=True)
+log_file_path = os.path.join(DATA_DIR, "bot.log")
+file_handler = RotatingFileHandler(
+    log_file_path,
+    maxBytes=5 * 1024 * 1024,
+    backupCount=2,
+    encoding="utf-8",
+)
+file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        file_handler,
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# In-memory storage for search results & Spotify sessions
+# SQLite Database Instance
+db = BotDatabase.get_instance()
+
+def track_and_check_banned(update: Update) -> bool:
+    """Records/updates user in SQLite and returns True if banned."""
+    user = update.effective_user
+    if not user:
+        return False
+    db.register_or_update_user(
+        user_id=user.id,
+        username=user.username or "",
+        first_name=user.first_name or "",
+        last_name=user.last_name or "",
+    )
+    return db.is_banned(user.id)
+
+# In-memory storage for search results & Spotify sessions (bounded, metadata-only)
 CACHE: Dict[str, Any] = {}
+
+def set_cache(key: str, val: Any):
+    """Keep memory footprint tiny by bounding cache size and storing only metadata."""
+    if len(CACHE) >= 200:
+        oldest_key = next(iter(CACHE))
+        CACHE.pop(oldest_key, None)
+    CACHE[key] = val
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
 AVATAR_PATH = os.path.join(ASSETS_DIR, "bot_avatar.jpg")
@@ -82,6 +137,10 @@ def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, 
 # ----------------- Handlers -----------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if track_and_check_banned(update):
+        await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
+        return
+
     welcome_text = (
         "<blockquote>👋 <b>Welcome to Universal Songs Downloader!</b> 🎵</blockquote>\n\n"
         "Download and receive studio-quality audio (up to <b>320kbps MP3 / FLAC</b>) "
@@ -94,6 +153,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<blockquote>👇 <i>Use the buttons below to configure quality or get help:</i></blockquote>"
     )
 
+    user_id = update.effective_user.id
     keyboard = [
         [
             InlineKeyboardButton("🔍 Search Songs", callback_data="ui:search_hint"),
@@ -103,6 +163,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("ℹ️ How to Use", callback_data="ui:help"),
         ]
     ]
+
+    if is_admin(user_id):
+        keyboard.append([InlineKeyboardButton("🛡️ Admin Dashboard", callback_data="admin:refresh")])
 
     photo_obj = open(AVATAR_PATH, "rb") if os.path.exists(AVATAR_PATH) else DEFAULT_COVER
     try:
@@ -117,6 +180,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo_obj.close()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if track_and_check_banned(update):
+        return
+
     help_text = (
         "<blockquote>📖 <b>Universal Songs Downloader Guide</b></blockquote>\n\n"
         "<b>1️⃣ Search Songs by Name:</b>\n"
@@ -138,6 +204,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(help_text, parse_mode=constants.ParseMode.HTML)
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if track_and_check_banned(update):
+        return
+
     fmt, bitrate = get_user_settings(context)
     text = (
         "<blockquote>⚙️ <b>Audio Quality Settings</b></blockquote>\n\n"
@@ -176,6 +245,10 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode=constants.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if track_and_check_banned(update):
+        await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
+        return
+
     text = update.message.text.strip()
     if not text:
         return
@@ -204,11 +277,11 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await status_msg.delete()
 
     cache_id = uuid.uuid4().hex[:8]
-    CACHE[cache_id] = {
+    set_cache(cache_id, {
         "type": "search",
         "query": query,
         "tracks": results,
-    }
+    })
 
     # Format beautiful caption with search results list
     caption_lines = [
@@ -270,10 +343,10 @@ async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await status_msg.delete()
 
     cache_id = uuid.uuid4().hex[:8]
-    CACHE[cache_id] = {
+    set_cache(cache_id, {
         "type": collection.type,
         "collection": collection,
-    }
+    })
 
     cover = collection.cover_url or DEFAULT_COVER
 
@@ -334,9 +407,17 @@ async def handle_spotify_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
 # ----------------- Callback Handlers -----------------
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if track_and_check_banned(update):
+        await update.callback_query.answer("⛔ Access restricted by administrator.", show_alert=True)
+        return
+
     query = update.callback_query
     data = query.data
     await query.answer()
+
+    if data.startswith("admin:"):
+        await admin_callback_router(update, context)
+        return
 
     if data == "ui:dismiss":
         await query.message.delete()
@@ -694,6 +775,9 @@ async def send_track_to_user(
                 connect_timeout=60,
             )
 
+        # Record download in SQLite
+        db.record_download(user_id=chat_id)
+
         # Delete the temporary progress message so chat remains clean!
         try:
             await progress_msg.delete()
@@ -707,10 +791,9 @@ async def send_track_to_user(
         except Exception:
             pass
     finally:
-        # Clean up temporary directory
+        # Clean up temporary directory and free buffers
         shutil.rmtree(temp_dir, ignore_errors=True)
-
-
+        gc.collect()
 
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -728,9 +811,26 @@ def main():
         .build()
     )
 
+    # User Commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("settings", settings_command))
+
+    # Admin Commands
+    application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("bc", broadcast_command))
+    application.add_handler(CommandHandler("logs", logs_command))
+    application.add_handler(CommandHandler("log", logs_command))
+    application.add_handler(CommandHandler("sendlog", sendlog_command))
+    application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("userinfo", userinfo_command))
+    application.add_handler(CommandHandler("clearcache", clearcache_command))
+    application.add_handler(CommandHandler("restart", restart_command))
+
+    # Callback & Message Handlers
     application.add_handler(CallbackQueryHandler(callback_router))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
