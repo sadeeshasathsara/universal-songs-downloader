@@ -178,6 +178,10 @@ class AudioDownloader:
 
         cookie_file = get_cookie_file()
 
+        # Check if a yt-dlp config file exists (used for --remote-components etc on VPS)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ytdlp_conf = os.path.join(base_dir, "data", "yt-dlp.conf")
+
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': f"{temp_basename}.%(ext)s",
@@ -198,11 +202,17 @@ class AudioDownloader:
                 }
             },
             'progress_hooks': [ydl_hook],
+            # Allow remote EJS solver script — needed on datacenter IPs (VPS) to bypass n-challenge
+            'remote_components': 'ejs:github',
         }
 
         if cookie_file:
             ydl_opts['cookiefile'] = cookie_file
             logger.info(f"Using YouTube cookie file: {cookie_file}")
+
+        if os.path.exists(ytdlp_conf):
+            ydl_opts['config_location'] = ytdlp_conf
+            logger.info(f"Using yt-dlp config: {ytdlp_conf}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
