@@ -183,10 +183,7 @@ class AudioDownloader:
         ytdlp_conf = os.path.join(base_dir, "data", "yt-dlp.conf")
 
         ydl_opts = {
-            # Prefer audio-only, fall all the way back to any format — handles VPS-restricted
-            # videos where only format 18 (combined video+audio mp4) is available
-            'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best[acodec!=none]/best',
-            'format_sort': ['abr', 'tbr'],
+            'format': 'bestaudio/best',
             'outtmpl': f"{temp_basename}.%(ext)s",
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -199,14 +196,9 @@ class AudioDownloader:
             'retries': 5,
             'fragment_retries': 5,
             'js_runtimes': {'node': {}},
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'mweb', 'web'],
-                }
-            },
             'progress_hooks': [ydl_hook],
-            # Allow remote EJS solver script — needed on datacenter IPs (VPS) to bypass n-challenge
-            'remote_components': 'ejs:github',
+            # Allow remote EJS solver script as a list of components
+            'remote_components': ['ejs:github'],
         }
 
         if cookie_file:
