@@ -195,7 +195,6 @@ class AudioDownloader:
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'ios', 'mweb', 'web'],
-                    'player_skip': ['configs', 'webpage'],
                 }
             },
             'progress_hooks': [ydl_hook],
