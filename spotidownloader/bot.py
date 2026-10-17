@@ -145,20 +145,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_text = (
         "<blockquote>👋 <b>Welcome to Universal Songs Downloader!</b> 🎵</blockquote>\n\n"
-        "Download and receive studio-quality audio (up to <b>320kbps MP3 / FLAC</b>) "
+        "Download studio-quality audio (up to <b>320kbps MP3 / FLAC</b>) "
         "with embedded ID3 tags and high-resolution cover artwork.\n\n"
-        "<b>✨ How to Use:</b>\n"
-        "• 🔍 <b>Search:</b> Type any song or artist (e.g. <code>Zd8</code> or <code>Blinding Lights</code>)\n"
-        "• 🎶 <b>Spotify Track:</b> Paste any song URL\n"
-        "• 💿 <b>Spotify Album:</b> Paste any album URL\n"
-        "• 📜 <b>Spotify Playlist:</b> Paste any playlist URL\n\n"
-        "<blockquote>👇 <i>Use the buttons below to configure quality or get help:</i></blockquote>"
+        "<b>✨ How to Search:</b>\n"
+        "• 🔍 <b>Exact Match:</b> <code>Song Name - Singer Name</code>\n"
+        "   <i>e.g. <code>Mahamaya - Supun Perera</code> or <code>Blinding Lights - The Weeknd</code></i>\n"
+        "• 🎶 <b>Spotify Track:</b> Paste any track link\n"
+        "• 💿 <b>Spotify Album:</b> Paste any album link\n"
+        "• 📜 <b>Spotify Playlist:</b> Paste any playlist link\n\n"
+        "<blockquote>👇 <i>Use the buttons below to configure quality or get search tips:</i></blockquote>"
     )
 
     user_id = update.effective_user.id
     keyboard = [
         [
-            InlineKeyboardButton("🔍 Search Songs", callback_data="ui:search_hint"),
+            InlineKeyboardButton("🔍 Search Hints", callback_data="ui:search_hint"),
             InlineKeyboardButton("⚙️ Audio Quality", callback_data="ui:settings"),
         ],
         [
@@ -188,9 +189,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     help_text = (
         "<blockquote>📖 <b>Universal Songs Downloader Guide</b></blockquote>\n\n"
-        "<b>1️⃣ Search Songs by Name:</b>\n"
-        "Just type any song title or artist into the chat (e.g. <code>Zd8</code> or <code>Adele Hello</code>). "
-        "The bot will display matching songs with individual download buttons.\n\n"
+        "<b>1️⃣ Search Exact Songs:</b>\n"
+        "For the best and most accurate results, search in this format:\n"
+        "👉 <code>Song Name - Singer Name</code>\n\n"
+        "<i>Examples:</i>\n"
+        "• <code>Mahamaya - Supun Perera</code>\n"
+        "• <code>Blinding Lights - The Weeknd</code>\n"
+        "• <code>Shape of You - Ed Sheeran</code>\n"
+        "• <code>Manike Mage Hithe - Yohani</code>\n\n"
+        "<blockquote>💡 <i>Tip: Adding the singer's name guarantees 100% exact match and original studio quality!</i></blockquote>\n\n"
         "<b>2️⃣ Download from Spotify:</b>\n"
         "Paste any Spotify URL directly:\n"
         "• <code>https://open.spotify.com/track/...</code>\n"
@@ -272,7 +279,9 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if not results:
         await status_msg.edit_text(
-            f"❌ <i>No songs found for: <b>{esc(query)}</b>. Try searching with artist name.</i>",
+            f"❌ <b>No songs found for:</b> <i>{esc(query)}</i>\n\n"
+            "<blockquote>💡 <b>Tip:</b> Try the <code>Song Name - Singer Name</code> format for exact results.\n"
+            f"e.g. <code>{esc(query)} - Artist Name</code></blockquote>",
             parse_mode=constants.ParseMode.HTML
         )
         return
@@ -294,7 +303,7 @@ async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE,
         dur = format_duration(track.duration_ms)
         caption_lines.append(f"<b>{idx}.</b> {esc(track.title)} — <i>{esc(track.artist_str)}</i> <code>[{dur}]</code>")
 
-    caption_lines.append("\n<blockquote>👇 <b>Tap a song below to download:</b></blockquote>")
+    caption_lines.append("\n<blockquote>👇 <b>Tap a song below to download</b>  •  <i>Tip: Search <code>Song - Singer</code> for exact match!</i></blockquote>")
     caption_text = "\n".join(caption_lines)
 
     keyboard = []
@@ -440,9 +449,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "ui:search_hint":
         await query.message.reply_text(
-            "<blockquote>💡 <b>Search Tip</b></blockquote>\n\n"
-            "Simply type any song title or artist name into the chat and send it!\n"
-            "Example: <code>Zd8</code> or <code>The Weeknd Blinding Lights</code>",
+            "<blockquote>🔍 <b>How to Search for Exact Songs</b></blockquote>\n\n"
+            "For the most accurate results, use this format:\n\n"
+            "👉 <code>Song Name - Singer Name</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>Mahamaya - Supun Perera</code>\n"
+            "• <code>Blinding Lights - The Weeknd</code>\n"
+            "• <code>Shape of You - Ed Sheeran</code>\n"
+            "• <code>Manike Mage Hithe - Yohani</code>\n"
+            "• <code>Serandib - Bathiya & Santhush</code>\n\n"
+            "<blockquote>💡 <i>Just the song name also works, but adding the singer gives you the exact match!</i></blockquote>\n\n"
+            "🎶 <b>Download from Spotify:</b>\n"
+            "Paste a Spotify link to download a track, album, or playlist directly.",
             parse_mode=constants.ParseMode.HTML
         )
         return
