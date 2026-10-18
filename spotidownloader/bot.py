@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import html
 import logging
@@ -126,6 +127,21 @@ def get_user_settings(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
     fmt = context.user_data.get("format", os.getenv("DEFAULT_AUDIO_FORMAT", "mp3"))
     bitrate = context.user_data.get("bitrate", os.getenv("DEFAULT_BITRATE", "320"))
     return fmt, bitrate
+
+# Channel for storing downloaded songs as a permanent Telegram-backed CDN
+CACHE_CHANNEL_ID = os.getenv("TELEGRAM_CACHE_CHANNEL_ID", "-1004474870702").strip()
+
+def get_track_cache_keys(track: TrackInfo) -> list[str]:
+    """Generates primary and secondary keys for matching cached tracks."""
+    keys = []
+    if track.spotify_id:
+        keys.append(f"sp:{track.spotify_id.strip().lower()}")
+    # Clean normalized string key: artist - title
+    norm_key = re.sub(r'[^a-zA-Z0-9]', '', f"{track.artist_str}_{track.title}").lower()
+    if norm_key:
+        keys.append(f"norm:{norm_key}")
+    return keys
+
 
 def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, bitrate: str, progress_callback=None):
     downloader = AudioDownloader(
@@ -722,6 +738,34 @@ async def send_track_to_user(
             parse_mode=constants.ParseMode.HTML,
         )
 
+    # --- TELEGRAM CDN CACHE CHECK ---
+    cache_keys = get_track_cache_keys(track)
+    cached_file_id = None
+    for k in cache_keys:
+        cid = db.get_cached_file_id(k)
+        if cid:
+            cached_file_id = cid
+            break
+
+    bot_username = context.bot.username or "UniversalSongsDownloader"
+    caption_text = f"🎵 <b>{esc(track.title)}</b> — <i>{esc(track.artist_str)}</i>\n⚡ @{bot_username}"
+
+    if cached_file_id:
+        logger.info(f"⚡ CDN CACHE HIT for {track.query} (file_id: {cached_file_id[:15]}...)")
+        try:
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=cached_file_id,
+                caption=caption_text,
+                parse_mode=constants.ParseMode.HTML,
+            )
+            db.record_download(user_id=chat_id)
+            asyncio.create_task(send_album_and_playlist_suggestions(chat_id, track, context))
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return
+        except Exception as cache_err:
+            logger.warning(f"Failed to send cached file_id, will download fresh: {cache_err}")
+
     # 2. Send temporary progress message directly below the card
     progress_msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -824,23 +868,48 @@ async def send_track_to_user(
             pass
 
         # Deliver audio file directly under the card
-        bot_username = context.bot.username or "UniversalSongsDownloader"
         duration_sec = int(track.duration_ms / 1000) if track.duration_ms else None
 
+        sent_audio_msg = None
         with open(filepath, "rb") as audio_file:
-            await context.bot.send_audio(
+            sent_audio_msg = await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=audio_file,
                 title=track.title,
                 performer=track.artist_str,
                 duration=duration_sec,
                 thumbnail=thumb_bytes,
-                caption=f"🎵 <b>{esc(track.title)}</b> — <i>{esc(track.artist_str)}</i>\n⚡ @{bot_username}",
+                caption=caption_text,
                 parse_mode=constants.ParseMode.HTML,
                 read_timeout=300,
                 write_timeout=300,
                 connect_timeout=60,
             )
+
+        # Extract file_id from delivered audio message
+        file_id = None
+        if sent_audio_msg and sent_audio_msg.audio:
+            file_id = sent_audio_msg.audio.file_id
+
+        # Cache file_id and post to database channel for safe keeping
+        if file_id:
+            for k in cache_keys:
+                db.set_cached_file_id(k, file_id, track.title, track.artist_str)
+            logger.info(f"Saved {track.query} file_id to local SQLite cache.")
+
+            # Forward / send to the backup database channel
+            if CACHE_CHANNEL_ID:
+                try:
+                    channel_target = int(CACHE_CHANNEL_ID) if CACHE_CHANNEL_ID.lstrip("-").isdigit() else CACHE_CHANNEL_ID
+                    await context.bot.send_audio(
+                        chat_id=channel_target,
+                        audio=file_id,
+                        title=track.title,
+                        performer=track.artist_str,
+                        caption=f"🎵 {track.title} - {track.artist_str}\n🆔 Keys: {', '.join(cache_keys)}",
+                    )
+                except Exception as ch_err:
+                    logger.warning(f"Could not post copy to storage channel {CACHE_CHANNEL_ID}: {ch_err}")
 
         # Record download in SQLite
         db.record_download(user_id=chat_id)

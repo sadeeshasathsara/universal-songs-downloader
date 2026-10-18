@@ -54,6 +54,19 @@ class BotDatabase:
                     stat_value INTEGER DEFAULT 0
                 );
             """)
+            # Song cache: maps a unique song key -> Telegram file_id
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS song_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    file_id TEXT NOT NULL,
+                    title TEXT,
+                    artist TEXT,
+                    cached_at TEXT NOT NULL
+                );
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_song_cache_key ON song_cache(cache_key);
+            """)
             # Initialize stats if empty
             cur = conn.execute("SELECT COUNT(*) FROM bot_stats WHERE stat_key = 'total_downloads';")
             if cur.fetchone()[0] == 0:
@@ -191,3 +204,33 @@ class BotDatabase:
             if row:
                 return dict(row)
             return None
+
+    def get_cached_file_id(self, cache_key: str) -> Optional[str]:
+        if not cache_key:
+            return None
+        with self._get_connection() as conn:
+            cur = conn.execute("SELECT file_id FROM song_cache WHERE cache_key = ?;", (cache_key.lower().strip(),))
+            row = cur.fetchone()
+            if row:
+                return row["file_id"]
+            return None
+
+    def set_cached_file_id(self, cache_key: str, file_id: str, title: str = "", artist: str = ""):
+        if not cache_key or not file_id:
+            return
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO song_cache (cache_key, file_id, title, artist, cached_at)
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (cache_key.lower().strip(), file_id, title or "", artist or "", now_iso)
+            )
+            conn.commit()
+
+    def get_cached_songs_count(self) -> int:
+        with self._get_connection() as conn:
+            cur = conn.execute("SELECT COUNT(*) FROM song_cache;")
+            return cur.fetchone()[0]
+
