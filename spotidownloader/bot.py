@@ -260,6 +260,13 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
         return
 
+    if not update.message or not update.message.text:
+        # Log forwarded channel info if present (useful for getting channel ID)
+        if update.message and update.message.forward_from_chat:
+            fc = update.message.forward_from_chat
+            logger.info(f"Forwarded from chat: id={fc.id} title={fc.title} type={fc.type}")
+        return
+
     text = update.message.text.strip()
     if not text:
         return
