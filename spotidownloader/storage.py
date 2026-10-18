@@ -102,6 +102,7 @@ class BotDatabase:
                     "last_active": now_iso,
                     "downloads_count": 0,
                     "is_banned": False,
+                    "is_new": True,
                 }
             else:
                 conn.execute(
@@ -122,7 +123,9 @@ class BotDatabase:
                     "last_active": now_iso,
                     "downloads_count": row["downloads_count"],
                     "is_banned": bool(row["is_banned"]),
+                    "is_new": False,
                 }
+
 
     def record_download(self, user_id: int):
         now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

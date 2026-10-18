@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import gc
 import random
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from typing import Dict, Any, Optional
 
@@ -35,6 +36,7 @@ from .models import CollectionInfo, TrackInfo
 from .storage import BotDatabase, DATA_DIR
 from .admin import (
     is_admin,
+    get_admin_ids,
     admin_command,
     stats_command,
     broadcast_command,
@@ -76,18 +78,51 @@ logger = logging.getLogger(__name__)
 # SQLite Database Instance
 db = BotDatabase.get_instance()
 
-def track_and_check_banned(update: Update) -> bool:
-    """Records/updates user in SQLite and returns True if banned."""
+def track_and_check_banned(update: Update, context: Optional[ContextTypes.DEFAULT_TYPE] = None) -> bool:
+    """Records/updates user in SQLite, alerts admins if new, and returns True if banned."""
     user = update.effective_user
     if not user:
         return False
-    db.register_or_update_user(
+    user_record = db.register_or_update_user(
         user_id=user.id,
         username=user.username or "",
         first_name=user.first_name or "",
         last_name=user.last_name or "",
     )
+
+    # Notify admin when a brand new user starts using the bot
+    if user_record.get("is_new") and context:
+        asyncio.create_task(notify_admin_new_user(user, context))
+
     return db.is_banned(user.id)
+
+async def notify_admin_new_user(user, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a notification to all configured admins when a new user joins."""
+    admin_ids = get_admin_ids()
+    if not admin_ids:
+        return
+
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Anonymous"
+    username_str = f"@{user.username}" if user.username else "No username"
+
+    notification_text = (
+        "<blockquote>👤 <b>New User Joined!</b></blockquote>\n\n"
+        f"📛 <b>Name:</b> {esc(full_name)}\n"
+        f"🏷 <b>Username:</b> {esc(username_str)}\n"
+        f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+        f"📅 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    for admin_id in admin_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=notification_text,
+                parse_mode=constants.ParseMode.HTML,
+            )
+        except Exception as err:
+            logger.warning(f"Could not notify admin {admin_id} of new user: {err}")
+
 
 # In-memory storage for search results & Spotify sessions (bounded, metadata-only)
 CACHE: Dict[str, Any] = {}
@@ -156,7 +191,7 @@ def download_and_tag_worker(track: TrackInfo, temp_dir: str, audio_format: str, 
 # ----------------- Handlers -----------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if track_and_check_banned(update):
+    if track_and_check_banned(update, context):
         await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
         return
 
@@ -272,7 +307,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode=constants.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if track_and_check_banned(update):
+    if track_and_check_banned(update, context):
         await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
         return
 
