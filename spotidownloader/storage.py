@@ -42,9 +42,23 @@ class BotDatabase:
                     joined_at TEXT NOT NULL,
                     last_active TEXT NOT NULL,
                     downloads_count INTEGER DEFAULT 0,
-                    is_banned INTEGER DEFAULT 0
+                    is_banned INTEGER DEFAULT 0,
+                    daily_downloads INTEGER DEFAULT 0,
+                    last_download_date TEXT DEFAULT '',
+                    custom_daily_limit INTEGER DEFAULT 5
                 );
             """)
+            # Safe schema migrations for existing database
+            for col_def in [
+                ("daily_downloads", "INTEGER DEFAULT 0"),
+                ("last_download_date", "TEXT DEFAULT ''"),
+                ("custom_daily_limit", "INTEGER DEFAULT 5"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {col_def[0]} {col_def[1]};")
+                except sqlite3.OperationalError:
+                    pass
+
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_users_active ON users(last_active);
             """)
@@ -128,15 +142,32 @@ class BotDatabase:
 
 
     def record_download(self, user_id: int):
-        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        now_iso = now.strftime("%Y-%m-%d %H:%M:%S")
+        today_str = now.strftime("%Y-%m-%d")
+
         with self._get_connection() as conn:
+            cur = conn.execute("SELECT daily_downloads, last_download_date FROM users WHERE user_id = ?;", (user_id,))
+            row = cur.fetchone()
+            daily = 1
+            if row:
+                last_date = row["last_download_date"] or ""
+                current_daily = row["daily_downloads"] or 0
+                if last_date == today_str:
+                    daily = current_daily + 1
+                else:
+                    daily = 1
+
             conn.execute(
                 """
                 UPDATE users
-                SET downloads_count = downloads_count + 1, last_active = ?
+                SET downloads_count = downloads_count + 1,
+                    daily_downloads = ?,
+                    last_download_date = ?,
+                    last_active = ?
                 WHERE user_id = ?;
                 """,
-                (now_iso, user_id)
+                (daily, today_str, now_iso, user_id)
             )
             conn.execute(
                 """
@@ -146,6 +177,87 @@ class BotDatabase:
                 """
             )
             conn.commit()
+
+    def check_user_daily_limit(self, user_id: int) -> dict:
+        """
+        Returns dict with:
+        - can_download: bool
+        - daily_downloads: int
+        - limit: int
+        - remaining: int
+        """
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "SELECT daily_downloads, last_download_date, custom_daily_limit FROM users WHERE user_id = ?;",
+                (user_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"can_download": True, "daily_downloads": 0, "limit": 5, "remaining": 5}
+
+            limit = row["custom_daily_limit"] if row["custom_daily_limit"] is not None else 5
+            last_date = row["last_download_date"] or ""
+            count = row["daily_downloads"] if last_date == today_str else 0
+            remaining = max(0, limit - count)
+            return {
+                "can_download": count < limit,
+                "daily_downloads": count,
+                "limit": limit,
+                "remaining": remaining,
+            }
+
+    def set_user_daily_limit(self, user_id: int, new_limit: int) -> bool:
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE users SET custom_daily_limit = ? WHERE user_id = ?;",
+                (new_limit, user_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_downloading_stats(self) -> dict:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        with self._get_connection() as conn:
+            total_dl = self.get_total_downloads()
+            # Today's total downloads
+            cur = conn.execute(
+                "SELECT SUM(daily_downloads) FROM users WHERE last_download_date = ?;",
+                (today_str,)
+            )
+            row = cur.fetchone()
+            today_dl = row[0] if (row and row[0] is not None) else 0
+
+            # Active downloaders today
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE last_download_date = ? AND daily_downloads > 0;",
+                (today_str,)
+            )
+            today_users = cur.fetchone()[0]
+
+            # Top downloaders today
+            cur = conn.execute(
+                """
+                SELECT user_id, username, first_name, daily_downloads, custom_daily_limit
+                FROM users
+                WHERE last_download_date = ? AND daily_downloads > 0
+                ORDER BY daily_downloads DESC
+                LIMIT 5;
+                """,
+                (today_str,)
+            )
+            top_today = [dict(r) for r in cur.fetchall()]
+
+            cached_count = self.get_cached_songs_count()
+
+            return {
+                "total_downloads": total_dl,
+                "today_downloads": today_dl,
+                "today_users": today_users,
+                "top_today": top_today,
+                "cached_songs": cached_count,
+            }
+
 
     def is_banned(self, user_id: int) -> bool:
         with self._get_connection() as conn:

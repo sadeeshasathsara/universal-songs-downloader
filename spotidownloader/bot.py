@@ -494,6 +494,57 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         return
 
+    # User requesting higher limit from admin
+    if data.startswith("user:req_limit:"):
+        req_uid = int(data.split(":")[2])
+        user_obj = query.from_user
+        u_name = f"{user_obj.first_name or ''} {user_obj.last_name or ''}".strip() or "User"
+        u_handle = f"@{user_obj.username}" if user_obj.username else "No username"
+
+        admin_ids = get_admin_ids()
+        admin_req_text = (
+            "<blockquote>📩 <b>Download Limit Increase Request</b></blockquote>\n\n"
+            f"👤 <b>User:</b> {esc(u_name)} ({esc(u_handle)})\n"
+            f"🆔 <b>User ID:</b> <code>{req_uid}</code>\n"
+            f"📅 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            "<i>Select a new daily download limit for this user:</i>"
+        )
+        admin_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("10 / day", callback_data=f"admin:set_limit:{req_uid}:10"),
+                InlineKeyboardButton("20 / day", callback_data=f"admin:set_limit:{req_uid}:20"),
+            ],
+            [
+                InlineKeyboardButton("50 / day", callback_data=f"admin:set_limit:{req_uid}:50"),
+                InlineKeyboardButton("Unlimited (999)", callback_data=f"admin:set_limit:{req_uid}:999"),
+            ],
+        ])
+
+        sent_to_admin = False
+        for aid in admin_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=aid,
+                    text=admin_req_text,
+                    reply_markup=admin_markup,
+                    parse_mode=constants.ParseMode.HTML,
+                )
+                sent_to_admin = True
+            except Exception as e:
+                logger.warning(f"Could not forward limit request to admin {aid}: {e}")
+
+        if sent_to_admin:
+            await query.answer("✅ Request sent to administrator! You will be notified once reviewed.", show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Request Sent", callback_data="ui:dismiss")]
+                ]))
+            except Exception:
+                pass
+        else:
+            await query.answer("⚠️ Could not reach administrator. Please try again later.", show_alert=True)
+        return
+
     if data == "ui:help":
         await help_command(update, context)
         return
@@ -733,6 +784,30 @@ async def send_track_to_user(
     audio_format: str = "mp3",
     bitrate: str = "320",
 ):
+    # Daily Download Limit Check (Admins are exempt)
+    if not is_admin(chat_id):
+        limit_status = db.check_user_daily_limit(chat_id)
+        if not limit_status["can_download"]:
+            limit_val = limit_status["limit"]
+            used_val = limit_status["daily_downloads"]
+            limit_msg = (
+                "<blockquote>🛑 <b>Daily Download Limit Reached</b></blockquote>\n\n"
+                f"You have used your daily allowance of <b>{used_val}/{limit_val} songs</b> today.\n"
+                "Your limit automatically resets at midnight.\n\n"
+                "<i>Need more downloads? Tap the button below to request an increase from the administrator:</i>"
+            )
+            req_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📩 Request Higher Limit from Admin", callback_data=f"user:req_limit:{chat_id}")],
+                [InlineKeyboardButton("❌ Dismiss", callback_data="ui:dismiss")],
+            ])
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=limit_msg,
+                reply_markup=req_keyboard,
+                parse_mode=constants.ParseMode.HTML,
+            )
+            return
+
     temp_dir = tempfile.mkdtemp(prefix="spotibot_")
     current_action = random.choice(STATUS_ING_PHRASES)
     progress_state = {

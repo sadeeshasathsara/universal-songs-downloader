@@ -89,6 +89,10 @@ def render_admin_dashboard() -> tuple[str, InlineKeyboardMarkup]:
 
     keyboard = [
         [
+            InlineKeyboardButton("📥 Downloading Stats", callback_data="admin:dl_stats"),
+            InlineKeyboardButton("⚡ Ongoing Downloads", callback_data="admin:ongoing"),
+        ],
+        [
             InlineKeyboardButton("📊 System Stats", callback_data="admin:stats"),
             InlineKeyboardButton("📜 View Logs", callback_data="admin:logs"),
         ],
@@ -426,6 +430,104 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(text, reply_markup=markup, parse_mode=constants.ParseMode.HTML)
         except Exception:
             pass
+
+    elif data == "admin:dl_stats":
+        dl_stats = storage.get_downloading_stats()
+        top_lines = []
+        for idx, u in enumerate(dl_stats["top_today"], start=1):
+            name = u.get("first_name") or u.get("username") or f"User {u['user_id']}"
+            top_lines.append(f"  <b>{idx}.</b> {html.escape(name)} — <code>{u['daily_downloads']}/{u.get('custom_daily_limit', 5)}</code> dl")
+
+        top_display = "\n".join(top_lines) if top_lines else "  <i>No downloads yet today.</i>"
+
+        text = (
+            "<blockquote>📥 <b>Downloading Statistics & Analytics</b></blockquote>\n\n"
+            f"📅 <b>Today's Total Downloads:</b> <code>{dl_stats['today_downloads']}</code>\n"
+            f"👥 <b>Active Users Today:</b> <code>{dl_stats['today_users']}</code>\n"
+            f"⚡ <b>All-Time Downloads:</b> <code>{dl_stats['total_downloads']}</code>\n"
+            f"💾 <b>Cached Songs (Instant CDN):</b> <code>{dl_stats['cached_songs']}</code>\n\n"
+            "<blockquote>🏆 <b>Top Downloaders Today:</b></blockquote>\n"
+            f"{top_display}"
+        )
+        back_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh", callback_data="admin:dl_stats")],
+            [InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin:refresh")],
+        ])
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode=constants.ParseMode.HTML)
+
+    elif data == "admin:ongoing":
+        # Check active temp spotibot directories
+        temp_root = tempfile.gettempdir()
+        active_jobs = []
+        try:
+            for item in os.listdir(temp_root):
+                if item.startswith("spotibot_"):
+                    folder_path = os.path.join(temp_root, item)
+                    if os.path.isdir(folder_path):
+                        mtime = os.path.getmtime(folder_path)
+                        age_sec = int(time.time() - mtime)
+                        files = os.listdir(folder_path)
+                        file_info = []
+                        for f in files:
+                            fp = os.path.join(folder_path, f)
+                            sz_mb = os.path.getsize(fp) / (1024 * 1024) if os.path.exists(fp) else 0
+                            file_info.append(f"{f} ({sz_mb:.1f} MB)")
+                        active_jobs.append((item, age_sec, file_info))
+        except Exception as e:
+            logger.warning(f"Error checking ongoing downloads: {e}")
+
+        if not active_jobs:
+            text = (
+                "<blockquote>⚡ <b>Ongoing Active Downloads</b></blockquote>\n\n"
+                "✅ <i>No downloads are currently in progress. System is idle.</i>"
+            )
+        else:
+            lines = [f"<blockquote>⚡ <b>Ongoing Active Downloads ({len(active_jobs)} Active):</b></blockquote>\n"]
+            for job_id, age, files in active_jobs:
+                f_str = ", ".join(files) if files else "resolving audio stream..."
+                lines.append(f"• 📁 <code>{job_id}</code> (running for {age}s)\n  └ <i>{html.escape(f_str)}</i>")
+            text = "\n".join(lines)
+
+        back_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh", callback_data="admin:ongoing")],
+            [InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin:refresh")],
+        ])
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode=constants.ParseMode.HTML)
+
+    elif data.startswith("admin:set_limit:"):
+        # Format: admin:set_limit:<target_user_id>:<amount>
+        parts = data.split(":")
+        target_uid = int(parts[2])
+        amount = int(parts[3])
+
+        storage.set_user_daily_limit(target_uid, amount)
+        user_info = storage.get_user_info(target_uid) or {}
+        user_name = user_info.get("first_name") or user_info.get("username") or str(target_uid)
+
+        confirm_text = (
+            f"✅ <b>Limit Updated!</b>\n\n"
+            f"User: <b>{html.escape(user_name)}</b> (<code>{target_uid}</code>)\n"
+            f"New Daily Limit: <b>{amount} songs/day</b>"
+        )
+        try:
+            await query.edit_message_text(confirm_text, parse_mode=constants.ParseMode.HTML)
+        except Exception:
+            await query.message.reply_text(confirm_text, parse_mode=constants.ParseMode.HTML)
+
+        # Notify the user directly
+        user_alert = (
+            "<blockquote>🎉 <b>Download Limit Increased!</b></blockquote>\n\n"
+            "An administrator has approved your request.\n"
+            f"Your new daily limit is now: <b>{amount} songs/day</b>! 🎵"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=user_alert,
+                parse_mode=constants.ParseMode.HTML,
+            )
+        except Exception as e:
+            logger.warning(f"Could not notify user {target_uid} of limit increase: {e}")
 
     elif data == "admin:stats":
         metrics = get_system_metrics()
