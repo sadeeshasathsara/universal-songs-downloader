@@ -307,26 +307,43 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode=constants.ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if track_and_check_banned(update, context):
-        await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
-        return
+    try:
+        if track_and_check_banned(update, context):
+            if update.message:
+                await update.message.reply_text("⛔ <b>Access Restricted:</b> Your account is restricted by an administrator.", parse_mode=constants.ParseMode.HTML)
+            return
 
-    if not update.message or not update.message.text:
-        # Log forwarded channel info if present (useful for getting channel ID)
-        if update.message and update.message.forward_from_chat:
-            fc = update.message.forward_from_chat
-            logger.info(f"Forwarded from chat: id={fc.id} title={fc.title} type={fc.type}")
-        return
+        if not update.message or not update.message.text:
+            # Handle forwarded messages without text gracefully
+            if update.message and update.message.forward_from_chat:
+                fc = update.message.forward_from_chat
+                logger.info(f"Forwarded from chat: id={fc.id} title={fc.title} type={fc.type}")
+            return
 
-    text = update.message.text.strip()
-    if not text:
-        return
+        text = update.message.text.strip()
+        if not text:
+            return
 
-    parsed = parse_spotify_url(text)
-    if parsed:
-        await handle_spotify_url(update, context, text)
-    else:
-        await handle_song_search(update, context, text)
+        # Sanitize length to prevent buffer/DOS attacks
+        if len(text) > 500:
+            text = text[:500]
+
+        parsed = parse_spotify_url(text)
+        if parsed:
+            await handle_spotify_url(update, context, text)
+        else:
+            await handle_song_search(update, context, text)
+    except Exception as e:
+        logger.error(f"Error handling user message: {e}", exc_info=True)
+        if update.message:
+            try:
+                await update.message.reply_text(
+                    "⚠️ <i>An error occurred while processing your request. Please try a different search or format.</i>",
+                    parse_mode=constants.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
 
 async def handle_song_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     status_msg = await update.message.reply_text(
@@ -1191,6 +1208,20 @@ def main():
     application.add_handler(CallbackQueryHandler(callback_router))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+
+    # Global Error Handler: Catches and logs all unhandled exceptions so bot never dies
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Unhandled exception in update {update}: {context.error}", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "⚠️ <i>An unexpected error occurred while processing your request. Please try again.</i>",
+                    parse_mode=constants.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
+    application.add_error_handler(global_error_handler)
 
     logger.info("Universal Songs Downloader Telegram Bot starting...")
     application.run_polling(
