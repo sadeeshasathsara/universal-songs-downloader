@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 from typing import Optional, Callable
 import static_ffmpeg
@@ -10,6 +11,11 @@ from .models import TrackInfo
 from .tagger import tag_file
 
 logger = logging.getLogger(__name__)
+
+# In-memory cache: {video_id: {'url': str, 'expires': float}}
+# Avoids re-running the 27–54s Deno JS challenge for the same video
+_stream_url_cache: dict = {}
+_STREAM_URL_TTL = 4 * 3600  # YouTube direct URLs are valid ~6h; cache for 4h to be safe
 
 def get_cookie_file() -> Optional[str]:
     """Finds cookies.txt file path if available to bypass datacenter IP restrictions."""
@@ -229,31 +235,88 @@ class AudioDownloader:
             download_succeeded = False
             last_error = ""
 
-            # Step 2: Download candidates in ranked order; failover if unavailable or blocked
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                for candidate in candidates:
-                    video_id = candidate.get('id')
-                    video_url = candidate.get('webpage_url') or candidate.get('url') or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
-                    if not video_url:
-                        continue
+            # Step 2: Download candidates in ranked order; failover if unavailable or blocked.
+            # We use a two-step approach per candidate:
+            #   a) Check the in-memory stream URL cache (avoids 27-54s Deno JS challenge on repeat)
+            #   b) If not cached: extract_info(download=False) to resolve + cache the direct URL
+            #   c) Download using the direct stream URL (Deno already ran in step b, not again)
+            extract_opts = dict(ydl_opts)
+            extract_opts.pop('outtmpl', None)
+            extract_opts.pop('postprocessors', None)
+            extract_opts.pop('progress_hooks', None)
 
-                    try:
-                        ret_code = ydl.download([video_url])
-                        if os.path.exists(expected_tmp_out) and os.path.getsize(expected_tmp_out) > 1024:
-                            download_succeeded = True
-                            break
+            for candidate in candidates:
+                video_id = candidate.get('id')
+                video_url = candidate.get('webpage_url') or candidate.get('url') or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
+                if not video_url:
+                    continue
+
+                try:
+                    # --- Cache lookup ---
+                    cached = _stream_url_cache.get(video_id) if video_id else None
+                    if cached and cached['expires'] > time.time():
+                        direct_url = cached['url']
+                        logger.info(f"Cache HIT for {video_id} — skipping Deno challenge")
+                    else:
+                        # Run full extraction (Deno JS challenge happens here, once)
+                        logger.info(f"Cache MISS for {video_id} — running yt-dlp extraction (Deno challenge)")
+                        with yt_dlp.YoutubeDL(extract_opts) as ydl_extract:
+                            info = ydl_extract.extract_info(video_url, download=False)
+
+                        if not info:
+                            last_error = f"Could not extract info for {video_url}"
+                            logger.warning(last_error)
+                            continue
+
+                        # Get the best audio URL from the resolved formats
+                        formats = info.get('formats') or []
+                        # Prefer audio-only formats; fall back to url on info dict
+                        audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('url')]
+                        if audio_formats:
+                            # Pick highest quality audio
+                            audio_formats.sort(key=lambda f: f.get('abr') or f.get('tbr') or 0, reverse=True)
+                            direct_url = audio_formats[0]['url']
+                        elif info.get('url'):
+                            direct_url = info['url']
                         else:
-                            last_error = f"Video {video_url} did not yield an audio stream"
-                            logger.warning(f"Candidate {video_url} produced no audio file, failing over to next candidate...")
-                    except Exception as err:
-                        last_error = str(err)
-                        logger.warning(f"Candidate {video_url} failed ({err}), failing over to next candidate...")
-                        if os.path.exists(expected_tmp_out):
-                            try:
-                                os.remove(expected_tmp_out)
-                            except Exception:
-                                pass
-                        continue
+                            last_error = f"No stream URL found in extracted info for {video_url}"
+                            logger.warning(last_error)
+                            continue
+
+                        # Store in cache
+                        if video_id:
+                            _stream_url_cache[video_id] = {
+                                'url': direct_url,
+                                'expires': time.time() + _STREAM_URL_TTL,
+                            }
+                            logger.info(f"Cached stream URL for {video_id} (TTL {_STREAM_URL_TTL}s)")
+
+                    # --- Download using direct URL (no Deno re-run) ---
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([direct_url])
+
+                    if os.path.exists(expected_tmp_out) and os.path.getsize(expected_tmp_out) > 1024:
+                        download_succeeded = True
+                        break
+                    else:
+                        last_error = f"Video {video_url} did not yield an audio stream"
+                        logger.warning(f"Candidate {video_url} produced no audio file, failing over...")
+                        # Evict bad cache entry
+                        if video_id and video_id in _stream_url_cache:
+                            del _stream_url_cache[video_id]
+
+                except Exception as err:
+                    last_error = str(err)
+                    logger.warning(f"Candidate {video_url} failed ({err}), failing over to next candidate...")
+                    if os.path.exists(expected_tmp_out):
+                        try:
+                            os.remove(expected_tmp_out)
+                        except Exception:
+                            pass
+                    # Evict potentially stale cache entry on error
+                    if video_id and video_id in _stream_url_cache:
+                        del _stream_url_cache[video_id]
+                    continue
 
             if not download_succeeded:
                 return False, target_path, f"Download failed across all candidates: {last_error}"
