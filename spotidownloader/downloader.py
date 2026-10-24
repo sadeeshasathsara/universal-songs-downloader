@@ -291,9 +291,14 @@ class AudioDownloader:
                             }
                             logger.info(f"Cached stream URL for {video_id} (TTL {_STREAM_URL_TTL}s)")
 
-                    # --- Download using direct URL (no Deno re-run) ---
+                    # --- Download using the YouTube watch URL ---
+                    # We MUST pass the YouTube page URL (not the raw CDN stream URL).
+                    # Passing a raw googlevideo.com URL makes yt-dlp skip format resolution,
+                    # which causes ffprobe to fail reading the audio codec ("unable to obtain
+                    # file audio codec with ffprobe"). The cache above just speeds up
+                    # extract_info; the actual download call always uses the canonical video URL.
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([direct_url])
+                        ydl.download([video_url])
 
                     if os.path.exists(expected_tmp_out) and os.path.getsize(expected_tmp_out) > 1024:
                         download_succeeded = True
