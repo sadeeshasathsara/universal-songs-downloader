@@ -189,7 +189,8 @@ class AudioDownloader:
         ytdlp_conf = os.path.join(base_dir, "data", "yt-dlp.conf")
 
         ydl_opts = {
-            'format': 'bestaudio/best',
+            # Prefer audio-only formats; fall back to best combined
+            'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': f"{temp_basename}.%(ext)s",
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -199,9 +200,17 @@ class AudioDownloader:
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
-            'retries': 5,
-            'fragment_retries': 5,
+            'retries': 10,
+            'fragment_retries': 10,
+            'http_chunk_size': 10485760,  # 10MB chunks — avoids partial 403s on large streams
             'progress_hooks': [ydl_hook],
+            # Force web player client — datacenter IPs get 403 with TV/Android clients
+            # but the web client (with cookies) is more permissive
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                }
+            },
             # Allow remote EJS solver script as a list of components
             'remote_components': ['ejs:github'],
         }
